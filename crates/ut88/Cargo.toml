@@ -6,3 +6,7 @@ edition.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+ut88-core = { path = "../ut88-core" }
+ut88-gui = { path = "../ut88-gui" }
+ut88-tui = { path = "../ut88-tui" }

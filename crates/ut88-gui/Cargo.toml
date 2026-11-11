@@ -5,3 +5,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ut88-core = { path = "../ut88-core" }
+ut88-audio = { path = "../ut88-audio" }
+i8080 = { path = "../i8080" }
+anyhow = "1"
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+rfd = "0.15"
