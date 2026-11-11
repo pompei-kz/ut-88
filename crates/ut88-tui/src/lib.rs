@@ -1,1 +1,159 @@
-//! Терминальный интерфейс эмулятора ЮТ-88 (ratatui + crossterm). Пока заглушка (этап 2 плана).
+//! Терминальный интерфейс эмулятора ЮТ-88 (ratatui + crossterm).
+//!
+//! - минимальная конфигурация — шесть семисегментных индикаторов крупными цифрами и
+//!   подсказка клавиатуры модуля 1;
+//! - полная конфигурация — экран дисплейного модуля 64 × 28 текстом;
+//! - горячие клавиши F1–F12 (см. [`keymap::HOTKEYS`]), меню F1 дублирует их буквами;
+//! - отладчик (F12) — отдельный экран.
+//!
+//! Вход — [`run`].
+
+pub mod app;
+pub mod debugger;
+pub mod input;
+pub mod keymap;
+pub mod programs;
+pub mod widgets;
+
+use std::io;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use ratatui::crossterm::event::{
+    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
+use ratatui::crossterm::{execute, terminal};
+use ut88_core::{CPU_HZ, FRAME_CYCLES, Machine};
+
+pub use app::App;
+
+/// Параметры запуска TUI.
+pub struct Options {
+    /// Множитель скорости относительно реального времени; 0 — максимум.
+    pub speed: f64,
+    /// Звук (в TUI не выводится, флаг принимается для совместимости).
+    pub sound: bool,
+    /// Папка с программами из журналов (`None` — искать `programs/`).
+    pub programs_dir: Option<PathBuf>,
+    /// Как собрать машину при «холодном старте» (`None` — `Machine::new` с той же
+    /// конфигурацией, без устройств расширения).
+    pub cold_start: Option<Box<dyn Fn() -> Machine>>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            speed: 1.0,
+            sound: false,
+            programs_dir: None,
+            cold_start: None,
+        }
+    }
+}
+
+/// Длительность кадра дисплея (20,16 мс).
+fn frame_duration() -> Duration {
+    Duration::from_secs_f64(FRAME_CYCLES as f64 / CPU_HZ)
+}
+
+/// Наибольшее отставание от реального времени, которое догоняется, с.
+const MAX_LAG: f64 = 0.25;
+
+/// Восстановление терминала при выходе (в том числе по панике).
+struct TermGuard {
+    kitty: bool,
+}
+
+impl Drop for TermGuard {
+    fn drop(&mut self) {
+        if self.kitty {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        ratatui::restore();
+    }
+}
+
+/// Запустить терминальный интерфейс. Возвращается по F10 (или «q» в меню F1).
+pub fn run(machine: Machine, opts: Options) -> anyhow::Result<()> {
+    // ratatui::init ставит обработчик паники, восстанавливающий терминал.
+    let mut term = ratatui::init();
+    let kitty = matches!(terminal::supports_keyboard_enhancement(), Ok(true))
+        && execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )
+        .is_ok();
+    let _guard = TermGuard { kitty };
+    if kitty {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+            prev(info);
+        }));
+    }
+
+    let mut app = App::new(machine, opts);
+    app.kitty = kitty;
+    if app.opts.sound {
+        app.say("Звук в терминальном интерфейсе не выводится");
+    }
+    let frame = frame_duration();
+    // Опорная точка реального времени: (момент, такт машины).
+    let mut base = (Instant::now(), app.m.cycles(), app.speed, app.running());
+
+    while !app.quit {
+        term.draw(|f| app.draw(f))?;
+        let deadline = Instant::now() + frame;
+        // События до конца кадра.
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if !event::poll(left)? {
+                break;
+            }
+            match event::read()? {
+                Event::Key(k) => app.on_key(k),
+                Event::FocusLost => app.input.clear(&mut app.m),
+                _ => {}
+            }
+            if app.quit {
+                break;
+            }
+        }
+        if app.quit {
+            break;
+        }
+        // Смена скорости, паузы или машины — новая опорная точка.
+        let running = app.running();
+        if base.2 != app.speed || base.3 != running || app.m.cycles() < base.1 {
+            base = (Instant::now(), app.m.cycles(), app.speed, running);
+        }
+        if !running {
+            continue;
+        }
+        if app.speed > 0.0 {
+            let elapsed = base.0.elapsed().as_secs_f64();
+            let mut target = base.1 + (elapsed * app.speed * CPU_HZ) as u64;
+            let lag = target.saturating_sub(app.m.cycles());
+            if lag as f64 > MAX_LAG * app.speed * CPU_HZ {
+                // Не догоняем большое отставание (машина медленнее реального времени
+                // или процесс спал): продолжаем с текущего момента.
+                target = app.m.cycles() + FRAME_CYCLES;
+                base = (Instant::now(), target, app.speed, running);
+            }
+            app.run_to_cycle(target);
+        } else {
+            // Максимум: считать кадрами, пока не истечёт ≈ 3/4 кадра реального времени.
+            let until = Instant::now() + frame * 3 / 4;
+            while Instant::now() < until && app.running() {
+                let t = app.m.cycles() + FRAME_CYCLES;
+                app.run_to_cycle(t);
+            }
+        }
+        app.update_meter();
+    }
+    Ok(())
+}

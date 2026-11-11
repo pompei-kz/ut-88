@@ -5,3 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ut88-core = { path = "../ut88-core" }
+i8080 = { path = "../i8080" }
+anyhow = "1"
+ratatui = "0.29"
