@@ -5,3 +5,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+i8080 = { path = "../i8080" }
+bincode = "1"
+hound = "3.5.1"
+serde = { version = "1.0.229", features = ["derive"] }
