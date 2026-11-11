@@ -1,0 +1,7 @@
+[package]
+name = "ut88-audio"
+description = "Вывод звука ЮТ-88"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

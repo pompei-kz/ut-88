@@ -1,0 +1,7 @@
+[package]
+name = "i8080"
+description = "Эмулятор процессора КР580ВМ80А (Intel 8080)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

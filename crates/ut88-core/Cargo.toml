@@ -1,0 +1,7 @@
+[package]
+name = "ut88-core"
+description = "Машина ЮТ-88: шина, карта памяти, устройства"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

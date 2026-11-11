@@ -1,0 +1,7 @@
+[package]
+name = "ut88-tui"
+description = "Терминальный интерфейс эмулятора ЮТ-88"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
