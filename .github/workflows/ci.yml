@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Long #[ignore] tests (8080 exerciser, Tetris) once a week.
+    - cron: "0 3 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Build, test, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev \
+            libwayland-dev libgl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Build
+        run: cargo build --all-targets --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  long-tests:
+    name: Long tests (ignored)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Long tests
+        # ut88-audio's ignored test needs a real sound card, so it is skipped here.
+        run: >
+          cargo test --release --locked --workspace --exclude ut88-audio
+          -- --ignored

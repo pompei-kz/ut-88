@@ -5,3 +5,10 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+authors = ["Евгений Колпаков"]
+license = "MIT OR Apache-2.0"
+description = "Emulator of the UT-88, a Soviet DIY home computer (KR580VM80A / Intel 8080) from the 1989–1990 magazine «ЮТ для умелых рук»"
+readme = "README.md"
+keywords = ["emulator", "intel-8080", "retrocomputing", "ut-88", "cp-m"]
+categories = ["emulators"]

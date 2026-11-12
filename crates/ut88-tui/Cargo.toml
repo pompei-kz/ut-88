@@ -3,6 +3,12 @@ name = "ut88-tui"
 description = "Терминальный интерфейс эмулятора ЮТ-88"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 ut88-core = { path = "../ut88-core" }

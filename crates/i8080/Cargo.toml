@@ -3,5 +3,11 @@ name = "i8080"
 description = "Эмулятор процессора КР580ВМ80А (Intel 8080)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
