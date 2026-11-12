@@ -570,6 +570,7 @@ impl App {
             self.audio
                 .resync(self.m.master_ticks(), self.m.tape_out_level());
         } else {
+            self.audio.set_speed(self.speed.factor());
             self.audio.push_edges(&edges, self.m.master_ticks());
         }
     }

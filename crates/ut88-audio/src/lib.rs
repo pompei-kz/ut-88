@@ -53,6 +53,9 @@ pub struct SampleGen {
     started: bool,
     /// Поправка шага (1,0 — номинал).
     pub ratio: f64,
+    /// Масштаб времени эмуляции для звука: на скоростях ниже ×1 равен скорости
+    /// (звук растягивается и понижается, как у замедленной машины), иначе 1,0.
+    pub time_scale: f64,
 }
 
 impl SampleGen {
@@ -68,6 +71,7 @@ impl SampleGen {
             dc_prev_out: 0.0,
             started: false,
             ratio: 1.0,
+            time_scale: 1.0,
         }
     }
 
@@ -78,7 +82,7 @@ impl SampleGen {
 
     /// Тактов 16 МГц на отсчёт (с учётом поправки).
     fn step(&self) -> f64 {
-        MASTER_HZ / self.rate * self.ratio
+        MASTER_HZ / self.rate * self.ratio * self.time_scale
     }
 
     /// Начать заново с момента `now` (после загрузки снимка, холодного старта).
@@ -286,6 +290,16 @@ impl Audio {
         }
     }
 
+    /// Сообщить скорость эмуляции (`None` — максимум). На скоростях ниже ×1 звук
+    /// растягивается во времени: иначе отсчётов не хватает, буфер пустеет и звук хрипит.
+    /// На ×1 и выше масштаб 1,0 (лишние отсчёты отбрасываются при переполнении буфера).
+    pub fn set_speed(&mut self, speed: Option<f64>) {
+        self.gen_.time_scale = match speed {
+            Some(k) if k > 0.0 && k < 1.0 => k,
+            _ => 1.0,
+        };
+    }
+
     /// Заполнение буфера, с.
     pub fn buffered(&self) -> f64 {
         self.shared.lock().map(|s| s.buf.len()).unwrap_or(0) as f64 / f64::from(self.gen_.rate())
@@ -401,6 +415,16 @@ mod tests {
         // Сигнал меняет знак.
         assert!(out.iter().any(|&v| v > 0.5));
         assert!(out.iter().any(|&v| v < -0.5));
+    }
+
+    #[test]
+    fn slow_speed_stretches_sound() {
+        // На ×0,5 одна эмулированная секунда должна дать две секунды звука.
+        let mut g = SampleGen::new(1000);
+        g.time_scale = 0.5;
+        let mut out = Vec::new();
+        g.feed(&[(0, true)], 16_000_000, &mut out);
+        assert_eq!(out.len(), 2000);
     }
 
     #[test]
