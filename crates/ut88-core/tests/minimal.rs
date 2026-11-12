@@ -151,6 +151,42 @@ fn tape_generated_monitor0_block() {
     assert_eq!(hl(&m), ut88_core::tape::checksum(&data));
 }
 
+/// Кассета вставлена до набора директивы «A» (как `--tape` при запуске): лента стоит,
+/// пока МОНИТОР не начнёт читать порт магнитофона, поэтому пилот-тон не теряется.
+#[test]
+fn tape_inserted_before_directive_a() {
+    let mut src = Machine::new(Config::minimal());
+    let data: Vec<u8> = (0..100u32).map(|i| (i * 11 + 7) as u8).collect();
+    src.load_bin(0xC100, &data);
+    let signal = src.tape_block_signal(TapeFormat::Monitor0, 0xC100, 0xC163);
+
+    let mut m = boot();
+    m.tape_insert(signal);
+    assert!(m.tape_inserted() && !m.tape_playing() && m.tape_auto_start());
+    // Пользователь «думает» 3 с — дольше, чем длится вся запись.
+    m.run_seconds(3.0);
+    assert!(!m.tape_playing());
+    assert_eq!(m.tape_position(), Some(0.0));
+    pad(&mut m, PadKey::Hex(0xA));
+    pad_hex(&mut m, "0000");
+    wait_getkey(&mut m, 30.0);
+    assert_eq!(m.save_bin(0xC100, 0xC163), data);
+    assert_eq!(hl(&m), ut88_core::tape::checksum(&data));
+    // Лента кончилась: «Воспроизведение» перематывает её в начало.
+    m.run_seconds(2.0);
+    assert!(m.tape_finished() && !m.tape_playing());
+    m.tape_start();
+    assert!(m.tape_playing());
+    assert!(m.tape_position().unwrap() < 0.01);
+    // «Стоп» сохраняет позицию и снимает автопуск.
+    m.run_seconds(0.5);
+    m.tape_pause();
+    let pos = m.tape_position().unwrap();
+    m.run_seconds(0.5);
+    assert_eq!(m.tape_position(), Some(pos));
+    assert!(!m.tape_auto_start());
+}
+
 #[test]
 fn snapshot_roundtrip_minimal() {
     let mut m = boot();

@@ -122,6 +122,28 @@ fn tape_monitor_f_block_directive_i() {
     assert!(!text.contains('?'), "{text}");
 }
 
+/// Кассета вставлена до набора директивы «I»: лента трогается при первом чтении порта.
+#[test]
+fn tape_inserted_before_directive_i() {
+    let mut src = Machine::new(Config::full());
+    let data: Vec<u8> = (0..128u32).map(|i| (i * 5 + 9) as u8).collect();
+    src.load_bin(0x4000, &data);
+    let signal = src.tape_block_signal(TapeFormat::MonitorF, 0x4000, 0x407F);
+
+    let mut m = boot();
+    m.tape_insert(signal);
+    m.run_seconds(3.0);
+    assert!(!m.tape_playing());
+    kb_type(&mut m, "I\r");
+    m.run_seconds(4.0);
+    assert!(m.tape_position().unwrap() > 1.0, "лента тронулась");
+    assert_eq!(m.save_bin(0x4000, 0x407F), data);
+    let text = screen_text(&m);
+    let sum = format!("{:04X}", tape::checksum(&data));
+    assert!(text.contains(&sum), "{text}");
+    assert!(!text.contains('?'), "{text}");
+}
+
 #[test]
 fn directive_o_to_wav_and_back() {
     let mut m = boot();
@@ -137,7 +159,7 @@ fn directive_o_to_wav_and_back() {
 
     m.load_bin(0x5000, &[0u8; 64]);
     kb_type(&mut m, "I");
-    m.tape_play_wav(&wav).unwrap();
+    m.tape_insert_wav(&wav).unwrap();
     kb_type(&mut m, "\r");
     m.run_seconds(4.0);
     assert_eq!(m.save_bin(0x5000, 0x503F), data);

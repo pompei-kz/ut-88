@@ -18,9 +18,9 @@ pub enum Hotkey {
     SpeedUp,
     /// Скорость ниже.
     SpeedDown,
-    /// Сохранить снимок.
+    /// Быстрый снимок (в файл быстрого снимка, без вопросов).
     SaveSnapshot,
-    /// Загрузить снимок.
+    /// Загрузить быстрый снимок.
     LoadSnapshot,
     /// Меню магнитофона.
     Tape,
@@ -32,7 +32,8 @@ pub enum Hotkey {
     Debugger,
 }
 
-/// Таблица горячих клавиш: клавиша, действие, описание (для меню и справки).
+/// Таблица горячих клавиш: клавиша, действие, описание (для меню и справки). Схема
+/// общая с GUI (`ut88_gui::keymap::HOTKEYS`).
 pub const HOTKEYS: &[(&str, Hotkey, &str)] = &[
     ("F1", Hotkey::Menu, "меню и справка"),
     ("F2", Hotkey::Reset, "«УСТ» (сброс процессора)"),
@@ -40,8 +41,12 @@ pub const HOTKEYS: &[(&str, Hotkey, &str)] = &[
     ("F4", Hotkey::Pause, "пауза / продолжить"),
     ("F5", Hotkey::SpeedUp, "скорость выше"),
     ("Shift+F5", Hotkey::SpeedDown, "скорость ниже"),
-    ("F6", Hotkey::SaveSnapshot, "сохранить снимок"),
-    ("F7", Hotkey::LoadSnapshot, "загрузить снимок"),
+    (
+        "F6",
+        Hotkey::SaveSnapshot,
+        "быстрый снимок (ut88-quick.snap)",
+    ),
+    ("F7", Hotkey::LoadSnapshot, "загрузить быстрый снимок"),
     ("F8", Hotkey::Tape, "магнитофон"),
     ("F9", Hotkey::Programs, "программы из журналов"),
     ("F10", Hotkey::Exit, "выход"),

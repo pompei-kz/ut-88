@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use ut88_core::{Config, Machine};
-use ut88_gui::loader::{self, ProgramInfo, parse_hex_u16, parse_load_arg};
+use ut88_gui::loader::{self, Image, ProgramInfo, StartSource, parse_hex_u16, parse_load_arg};
 use ut88_gui::{GuiOptions, Speed};
 
 /// Конфигурация машины.
@@ -58,7 +58,8 @@ struct Args {
     #[arg(long, value_name = "ФАЙЛ")]
     snapshot: Option<PathBuf>,
 
-    /// Скорость: 1, 2, 4, 8 или max (0 — тоже максимум).
+    /// Скорость (ряд общий для окна и терминала): 0.25, 0.5, 1, 2, 4, 8, 16 или max
+    /// (0 — тоже максимум).
     #[arg(long, value_name = "N", default_value = "1", value_parser = parse_speed)]
     speed: f64,
 
@@ -76,17 +77,7 @@ fn parse_addr(s: &str) -> Result<u16, String> {
 }
 
 fn parse_speed(s: &str) -> Result<f64, String> {
-    if s.eq_ignore_ascii_case("max") {
-        return Ok(0.0);
-    }
-    let v: f64 = s
-        .trim_start_matches(['x', '×'])
-        .parse()
-        .map_err(|_| format!("неверная скорость «{s}»: нужно 1, 2, 4, 8 или max"))?;
-    if v < 0.0 {
-        return Err("скорость не может быть отрицательной".into());
-    }
-    Ok(v)
+    ut88_core::speed::parse_speed(s)
 }
 
 /// Конфигурация по ключам.
@@ -132,24 +123,51 @@ fn build_machine(args: &Args, table: &[ProgramInfo]) -> Result<Machine> {
         let (path, addr) = parse_load_arg(l)?;
         let img = loader::load_file(&path, addr, table)?;
         img.load_into(&mut m);
-        eprintln!(
-            "ut88: {} — {} байт с {:04X}{}",
-            path.display(),
-            img.len(),
-            img.first_addr().unwrap_or(0),
-            img.start
-                .map(|s| format!(", пуск {s:04X}"))
-                .unwrap_or_default()
-        );
+        eprintln!("ut88: {}", load_message(&path, &img));
     }
     if let Some(a) = args.run {
         m.jump(a);
+        eprintln!("ut88: пуск с {a:04X} (--run)");
+    } else if !args.load.is_empty() {
+        eprintln!(
+            "ut88: программа загружена, но не запущена (нет --run): \
+             запустите директивой МОНИТОРА или ключом --run АДРЕС"
+        );
     }
     if let Some(t) = &args.tape {
-        m.tape_play_wav(t)
+        m.tape_insert_wav(t)
             .with_context(|| format!("не читается WAV {}", t.display()))?;
+        eprintln!(
+            "ut88: кассета {} вставлена, лента стоит — тронется, когда программа начнёт \
+             читать магнитофон (директива A / I), или кнопкой «Воспроизведение» (F8)",
+            t.display()
+        );
     }
     Ok(m)
+}
+
+/// Сообщение о загруженном образе: сколько байт, куда и что известно об адресе пуска.
+fn load_message(path: &std::path::Path, img: &Image) -> String {
+    let mut s = format!(
+        "{} — {} байт с {:04X}",
+        path.display(),
+        img.len(),
+        img.first_addr().unwrap_or(0)
+    );
+    match (img.start, img.start_source) {
+        (Some(a), Some(StartSource::Table)) => {
+            s += &format!(", адрес пуска по programs/README.md {a:04X}");
+        }
+        (Some(a), _) => s += &format!(", адрес пуска из файла {a:04X}"),
+        (None, _) => {}
+    }
+    if let Some(from) = img.relocated_from {
+        s += &format!(
+            " (сдвинуто с {from:04X}: адрес пуска неизвестен, программа может не работать \
+             на новом месте)"
+        );
+    }
+    s
 }
 
 fn main() -> Result<()> {
@@ -218,6 +236,11 @@ mod tests {
         assert_eq!(a.speed, 1.0);
         assert!(Args::try_parse_from(["ut88", "--run", "XYZ"]).is_err());
         assert!(Args::try_parse_from(["ut88", "--speed", "fast"]).is_err());
+        assert!(Args::try_parse_from(["ut88", "--speed", "3"]).is_err());
+        let a = Args::try_parse_from(["ut88", "--speed", "16"]).unwrap();
+        assert_eq!(Speed::from_factor(a.speed).factor(), Some(16.0));
+        let a = Args::try_parse_from(["ut88", "--speed", "0.25"]).unwrap();
+        assert_eq!(a.speed, 0.25);
         assert!(Args::try_parse_from(["ut88", "--config", "huge"]).is_err());
     }
 
@@ -263,6 +286,42 @@ mod tests {
             m.peek(0xC000),
             std::fs::read(repo("programs/fill-const.bin")).unwrap()[0]
         );
+    }
+
+    #[test]
+    fn load_messages() {
+        let t = table();
+        let gamma = std::path::PathBuf::from(repo("programs/gamma.bin"));
+        let img = loader::load_file(&gamma, None, &t).unwrap();
+        let msg = load_message(&gamma, &img);
+        assert!(
+            msg.contains("адрес пуска по programs/README.md C03E"),
+            "{msg}"
+        );
+        let img = loader::load_file(&gamma, Some(0xC100), &t).unwrap();
+        let msg = load_message(&gamma, &img);
+        assert!(msg.contains("с C100"), "{msg}");
+        assert!(!msg.contains("C03E"), "{msg}");
+        assert!(msg.contains("сдвинуто"), "{msg}");
+    }
+
+    /// Окно и терминал — одна схема горячих клавиш.
+    #[test]
+    fn hotkeys_same_in_gui_and_tui() {
+        let gui: Vec<&str> = ut88_gui::keymap::HOTKEYS.iter().map(|h| h.0).collect();
+        let tui: Vec<&str> = ut88_tui::keymap::HOTKEYS.iter().map(|h| h.0).collect();
+        assert_eq!(gui, tui);
+        for (k, what) in [("F2", "УСТ"), ("F12", "отладчик"), ("F8", "агнитофон")]
+        {
+            let g = ut88_gui::keymap::HOTKEYS.iter().find(|h| h.0 == k).unwrap();
+            let t = ut88_tui::keymap::HOTKEYS.iter().find(|h| h.0 == k).unwrap();
+            assert!(
+                g.1.contains(what) && t.2.contains(what),
+                "{k}: {} / {}",
+                g.1,
+                t.2
+            );
+        }
     }
 
     #[test]

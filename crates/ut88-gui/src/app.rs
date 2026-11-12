@@ -19,7 +19,7 @@ const MOUSE_MIN_HOLD: f64 = 0.3;
 /// Минимальное время удержания клавиши ПК, с (нажатие и отпускание могли прийти в одном
 /// кадре окна).
 const PC_MIN_HOLD: f64 = 0.06;
-/// Файл быстрого снимка (F5/F9).
+/// Файл быстрого снимка (F6/F7).
 pub const QUICK_SNAPSHOT: &str = "ut88-quick.snap";
 
 /// Цвет люминофора.
@@ -91,6 +91,7 @@ pub struct App {
     dbg: Debugger,
     help_open: bool,
     about_open: bool,
+    programs_open: bool,
     tape: TapeUi,
     programs_dir: Option<PathBuf>,
     programs: Vec<ProgramInfo>,
@@ -130,6 +131,7 @@ impl App {
             dbg: Debugger::default(),
             help_open: false,
             about_open: false,
+            programs_open: false,
             tape: TapeUi {
                 load_addr: "C000".into(),
                 save_start: "C000".into(),
@@ -316,10 +318,11 @@ impl App {
                     physical_key,
                     pressed,
                     repeat,
+                    modifiers,
                     ..
                 } => {
                     let key = physical_key.unwrap_or(key);
-                    if pressed && !repeat && self.hotkey(ctx, key) {
+                    if pressed && !repeat && self.hotkey(ctx, key, modifiers.shift) {
                         continue;
                     }
                     let hit = if to_kb {
@@ -377,18 +380,102 @@ impl App {
         }
     }
 
-    fn hotkey(&mut self, ctx: &egui::Context, key: egui::Key) -> bool {
+    /// Горячие клавиши — общая схема с TUI (см. [`keymap::HOTKEYS`]).
+    fn hotkey(&mut self, ctx: &egui::Context, key: egui::Key, shift: bool) -> bool {
         match key {
             egui::Key::F1 => self.help_open = !self.help_open,
-            egui::Key::F2 => self.dbg.open = !self.dbg.open,
-            egui::Key::F5 => self.save_snapshot(Path::new(QUICK_SNAPSHOT)),
-            egui::Key::F8 => self.toggle_pause(),
-            egui::Key::F9 => self.load_snapshot(Path::new(QUICK_SNAPSHOT)),
-            egui::Key::F12 => self.press(Hit::Pad(PadKey::Reset), false),
+            egui::Key::F2 => self.press(Hit::Pad(PadKey::Reset), false),
+            egui::Key::F3 => {
+                let c = self.m.config().clone();
+                self.cold_start(c);
+            }
+            egui::Key::F4 => self.toggle_pause(),
+            egui::Key::F5 => self.change_speed(!shift),
+            // Некоторые раскладки присылают Shift+F5 как F17.
+            egui::Key::F17 => self.change_speed(false),
+            egui::Key::F6 => self.save_snapshot(Path::new(QUICK_SNAPSHOT)),
+            egui::Key::F7 => self.load_snapshot(Path::new(QUICK_SNAPSHOT)),
+            egui::Key::F8 => self.tape.open = !self.tape.open,
+            egui::Key::F9 => self.programs_open = !self.programs_open,
+            egui::Key::F10 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            egui::Key::F12 => self.dbg.open = !self.dbg.open,
             _ => return false,
         }
         ctx.request_repaint();
         true
+    }
+
+    fn change_speed(&mut self, up: bool) {
+        self.speed = self.speed.step(up);
+        self.debt = 0.0;
+        self.say(format!("Скорость: {}", self.speed.label()));
+    }
+
+    // ----- магнитофон -----
+
+    fn insert_tape(&mut self, p: &Path) -> anyhow::Result<String> {
+        self.m.tape_insert_wav(p)?;
+        Ok(format!(
+            "Кассета {} вставлена; лента тронется, когда программа начнёт читать \
+             (директива A / I), или кнопкой «Воспроизведение»",
+            p.display()
+        ))
+    }
+
+    fn tape_play_toggle(&mut self) {
+        if !self.m.tape_inserted() {
+            self.fail("Кассета не вставлена (Магнитофон → Вставить кассету)");
+        } else if self.m.tape_playing() {
+            self.m.tape_pause();
+            self.say("Лента остановлена");
+        } else {
+            self.m.tape_start();
+            self.say("Воспроизведение");
+        }
+    }
+
+    fn tape_rewind(&mut self) {
+        if self.m.tape_rewind() {
+            self.say("Лента перемотана в начало");
+        }
+    }
+
+    /// Состояние магнитофона для строки состояния и окна.
+    fn tape_status(&self) -> String {
+        let mut s = match self.m.tape_position() {
+            None => "кассеты нет".to_string(),
+            Some(p) if self.m.tape_finished() => format!("лента кончилась ({p:.1} с)"),
+            Some(p) if self.m.tape_playing() => format!("▶ лента {p:.1} с"),
+            Some(p) if self.m.tape_auto_start() => {
+                format!("⏹ лента {p:.1} с — тронется при чтении")
+            }
+            Some(p) => format!("⏹ лента {p:.1} с — стоп"),
+        };
+        if self.m.tape_recording() {
+            s += " ● запись";
+        }
+        s
+    }
+
+    fn tape_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let ins = self.m.tape_inserted();
+            let label = if self.m.tape_playing() {
+                "⏹ Стоп"
+            } else {
+                "▶ Воспроизведение"
+            };
+            if ui.add_enabled(ins, egui::Button::new(label)).clicked() {
+                self.tape_play_toggle();
+            }
+            if ui
+                .add_enabled(ins, egui::Button::new("⏮ В начало"))
+                .clicked()
+            {
+                self.tape_rewind();
+            }
+            ui.label(self.tape_status());
+        });
     }
 
     // ----- эмуляция -----
@@ -471,7 +558,7 @@ impl App {
             self.actual_speed = self.actual_speed * 0.9 + inst * 0.1;
         }
         let edges = self.m.drain_sound_edges();
-        if self.speed == Speed::Max {
+        if self.speed == Speed::MAX {
             self.audio
                 .resync(self.m.master_ticks(), self.m.tape_out_level());
         } else {
@@ -581,11 +668,11 @@ impl App {
             ));
         } else {
             self.say(format!(
-                "Загружено {} с {:04X}{}",
+                "Загружено {} с {:04X}{} — не запущено",
                 names.join(", "),
                 p.load,
                 p.start
-                    .map(|s| format!(", пуск {s:04X}"))
+                    .map(|s| format!(", адрес пуска {s:04X}"))
                     .unwrap_or_default()
             ));
         }
@@ -619,24 +706,26 @@ impl App {
     fn menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("Машина", |ui| {
-                if ui.button("УСТ — сброс (F12)").clicked() {
+                if ui.button("УСТ — сброс (F2)").clicked() {
                     self.press(Hit::Pad(PadKey::Reset), false);
                     ui.close();
                 }
-                if ui.button("Холодный старт (выкл./вкл. питания)").clicked() {
+                if ui.button("Холодный старт — выкл./вкл. питания (F3)").clicked() {
                     let c = self.m.config().clone();
                     self.cold_start(c);
                     ui.close();
                 }
-                let label = if self.paused { "Продолжить (F8)" } else { "Пауза (F8)" };
+                let label = if self.paused { "Продолжить (F4)" } else { "Пауза (F4)" };
                 if ui.button(label).clicked() {
                     self.toggle_pause();
                     ui.close();
                 }
                 ui.separator();
-                ui.label("Скорость:");
-                for s in Speed::ALL {
-                    ui.radio_value(&mut self.speed, s, s.label());
+                ui.label("Скорость (F5 — выше, Shift+F5 — ниже):");
+                for s in Speed::all() {
+                    if ui.radio_value(&mut self.speed, s, s.label()).changed() {
+                        self.debt = 0.0;
+                    }
                 }
                 ui.separator();
                 ui.label("Конфигурация (холодный старт):");
@@ -667,14 +756,28 @@ impl App {
                 if ui.button("Вставить кассету (WAV)…").clicked() {
                     ui.close();
                     if let Some(p) = pick_open("WAV", &["wav"]) {
-                        match self.m.tape_play_wav(&p) {
-                            Ok(()) => self.say(format!("Кассета: {}", p.display())),
+                        match self.insert_tape(&p) {
+                            Ok(msg) => self.say(msg),
                             Err(e) => self.fail(format!("WAV не читается: {e}")),
                         }
                     }
                 }
-                if ui.button("Вынуть кассету").clicked() {
-                    self.m.tape_stop();
+                let ins = self.m.tape_inserted();
+                let label = if self.m.tape_playing() {
+                    "Стоп"
+                } else {
+                    "Воспроизведение"
+                };
+                if ui.add_enabled(ins, egui::Button::new(label)).clicked() {
+                    self.tape_play_toggle();
+                    ui.close();
+                }
+                if ui.add_enabled(ins, egui::Button::new("Перемотать в начало")).clicked() {
+                    self.tape_rewind();
+                    ui.close();
+                }
+                if ui.add_enabled(ins, egui::Button::new("Вынуть кассету")).clicked() {
+                    self.m.tape_eject();
                     self.say("Кассета вынута");
                     ui.close();
                 }
@@ -702,7 +805,7 @@ impl App {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Быстрая загрузка / сохранение, WAV из .bin…").clicked() {
+                if ui.button("Магнитофон и файлы… (F8)").clicked() {
                     self.tape.open = true;
                     ui.close();
                 }
@@ -721,11 +824,11 @@ impl App {
                     }
                 }
                 ui.separator();
-                if ui.button("Быстрый снимок (F5)").clicked() {
+                if ui.button("Быстрый снимок (F6)").clicked() {
                     self.save_snapshot(Path::new(QUICK_SNAPSHOT));
                     ui.close();
                 }
-                if ui.button("Загрузить быстрый снимок (F9)").clicked() {
+                if ui.button("Загрузить быстрый снимок (F7)").clicked() {
                     self.load_snapshot(Path::new(QUICK_SNAPSHOT));
                     ui.close();
                 }
@@ -743,38 +846,12 @@ impl App {
                 }
             });
             ui.menu_button("Программы", |ui| {
-                if self.programs.is_empty() {
-                    ui.label("папка programs/ не найдена");
+                if ui.button("Окно «Программы из журналов» (F9)").clicked() {
+                    self.programs_open = true;
+                    ui.close();
                 }
-                let progs = self.programs.clone();
-                for p in progs.iter().filter(|p| p.data_for().is_none()) {
-                    let ok = !p.needs_display() || self.has_display();
-                    ui.menu_button(format!("{} — {}", p.name, p.title), |ui| {
-                        ui.label(format!(
-                            "{}; {}\nзагрузка {:04X}, пуск {}",
-                            p.issue,
-                            p.config,
-                            p.load,
-                            p.start.map(|s| format!("{s:04X}")).unwrap_or("—".into())
-                        ));
-                        if !ok {
-                            ui.label(
-                                RichText::new("нужна полная конфигурация").color(Color32::LIGHT_RED),
-                            );
-                        }
-                        if ui.add_enabled(ok, egui::Button::new("Загрузить")).clicked() {
-                            self.load_program(p, false);
-                            ui.close();
-                        }
-                        if ui
-                            .add_enabled(ok && p.start.is_some(), egui::Button::new("Загрузить и запустить"))
-                            .clicked()
-                        {
-                            self.load_program(p, true);
-                            ui.close();
-                        }
-                    });
-                }
+                ui.separator();
+                self.programs_list(ui, true);
             });
             ui.menu_button("Вид", |ui| {
                 let mut on = self.audio.enabled() && self.audio.is_available();
@@ -799,7 +876,7 @@ impl App {
                 ui.radio_value(&mut self.phosphor, Phosphor::Green, "зелёный");
                 ui.radio_value(&mut self.phosphor, Phosphor::White, "белый");
                 ui.separator();
-                if ui.button("Отладчик (F2)").clicked() {
+                if ui.button("Отладчик (F12)").clicked() {
                     self.dbg.open = true;
                     ui.close();
                 }
@@ -815,6 +892,75 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Список программ из `programs/` с кнопками загрузки (в меню и в окне F9).
+    fn programs_list(&mut self, ui: &mut egui::Ui, in_menu: bool) {
+        if self.programs.is_empty() {
+            ui.label("папка programs/ не найдена");
+        }
+        let progs = self.programs.clone();
+        for p in progs.iter().filter(|p| p.data_for().is_none()) {
+            let ok = !p.needs_display() || self.has_display();
+            let info = format!(
+                "{}; {}\nзагрузка {:04X}, пуск {}",
+                p.issue,
+                p.config,
+                p.load,
+                p.start.map(|s| format!("{s:04X}")).unwrap_or("—".into())
+            );
+            let mut buttons = |ui: &mut egui::Ui| {
+                let mut clicked = false;
+                if ui.add_enabled(ok, egui::Button::new("Загрузить")).clicked() {
+                    self.load_program(p, false);
+                    clicked = true;
+                }
+                if ui
+                    .add_enabled(
+                        ok && p.start.is_some(),
+                        egui::Button::new("Загрузить и запустить"),
+                    )
+                    .clicked()
+                {
+                    self.load_program(p, true);
+                    clicked = true;
+                }
+                clicked
+            };
+            if in_menu {
+                ui.menu_button(format!("{} — {}", p.name, p.title), |ui| {
+                    ui.label(&info);
+                    if !ok {
+                        ui.label(
+                            RichText::new("нужна полная конфигурация").color(Color32::LIGHT_RED),
+                        );
+                    }
+                    if buttons(ui) {
+                        ui.close();
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    buttons(ui);
+                    ui.label(RichText::new(format!("{} — {}", p.name, p.title)).strong())
+                        .on_hover_text(&info);
+                    if !ok {
+                        ui.label(
+                            RichText::new("нужна полная конфигурация").color(Color32::LIGHT_RED),
+                        );
+                    }
+                });
+            }
+        }
+    }
+
+    fn programs_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.programs_open;
+        egui::Window::new("Программы из журналов")
+            .open(&mut open)
+            .default_width(560.0)
+            .show(ctx, |ui| self.programs_list(ui, false));
+        self.programs_open = open && self.programs_open;
     }
 
     fn config_kind(&self) -> u8 {
@@ -857,15 +1003,7 @@ impl App {
             ui.separator();
             ui.label(format!("Время: {:.1} с", self.m.time()));
             ui.separator();
-            let tape = match self.m.tape_position() {
-                Some(p) if !self.m.tape_finished() => format!("лента {p:.1} с"),
-                Some(_) => "лента кончилась".into(),
-                None => "кассеты нет".into(),
-            };
-            ui.label(tape);
-            if self.m.tape_recording() {
-                ui.label(RichText::new("● запись").color(Color32::RED));
-            }
+            ui.label(self.tape_status());
             ui.separator();
             ui.label(if self.audio.is_available() && self.audio.enabled() {
                 "🔊"
@@ -908,7 +1046,7 @@ impl App {
                         ui.label(keymap::pad_label(*p));
                         ui.end_row();
                     }
-                    ui.monospace("F12");
+                    ui.monospace("F2");
                     ui.label("УСТ");
                     ui.end_row();
                 });
@@ -938,6 +1076,14 @@ impl App {
             .open(&mut open)
             .default_width(520.0)
             .show(ctx, |ui| {
+                ui.heading("Кассета");
+                self.tape_controls(ui);
+                ui.label(
+                    "Вставленная кассета стоит; лента трогается сама, когда программа \
+                     начинает читать вход магнитофона (директива A МОНИТОРА модуля 1, I \
+                     МОНИТОРА-F), или кнопкой «Воспроизведение».",
+                );
+                ui.separator();
                 let t = &mut self.tape;
                 ui.heading("Быстрая загрузка .bin");
                 path_row(ui, &mut t.load_path, true, "bin");
@@ -1038,9 +1184,8 @@ impl App {
                 ))
             }
             5 => {
-                let p = t.gen_wav.trim().to_string();
-                self.m.tape_play_wav(&p)?;
-                Ok(format!("Кассета: {p}"))
+                let p = PathBuf::from(t.gen_wav.trim());
+                self.insert_tape(&p)
             }
             _ => Ok(String::new()),
         }
@@ -1181,6 +1326,9 @@ impl eframe::App for App {
         }
         if self.tape.open {
             self.tape_window(ctx);
+        }
+        if self.programs_open {
+            self.programs_window(ctx);
         }
         if self.about_open {
             egui::Window::new("О программе")

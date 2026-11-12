@@ -19,6 +19,30 @@ pub struct Program {
     pub start: Option<u16>,
 }
 
+impl Program {
+    /// Название для сообщений (или имя файла, если названия нет).
+    pub fn title_or_name(&self) -> &str {
+        if self.title.is_empty() {
+            &self.name
+        } else {
+            &self.title
+        }
+    }
+
+    /// Почему программу нельзя загрузить в машину этой конфигурации (`None` — можно).
+    /// Требования берутся из столбца «Конфигурация» `programs/README.md` — так же, как
+    /// в GUI.
+    pub fn unsupported(&self, c: &ut88_core::Config) -> Option<String> {
+        if self.config.contains("дисплейный") && c.display.is_none() {
+            return Some("нужен дисплейный модуль — запустите эмулятор с --config full".into());
+        }
+        if self.config.contains("ОЗУ") && !c.ram64 {
+            return Some("нужен модуль ОЗУ 64 Кбайт (конфигурация full)".into());
+        }
+        None
+    }
+}
+
 fn parse_hex(s: &str) -> Option<u16> {
     let s = s.trim().trim_end_matches(['H', 'h']);
     u16::from_str_radix(s, 16).ok()
@@ -114,5 +138,9 @@ mod tests {
         let f = ps.iter().find(|p| p.name == "labyrinth-field").unwrap();
         assert_eq!((f.load, f.start), (Some(0xC200), None));
         assert!(ps.iter().all(|p| p.load.is_some()), "{ps:?}");
+        let min = ut88_core::Config::minimal();
+        assert!(t.unsupported(&min).is_some());
+        assert!(t.unsupported(&ut88_core::Config::full()).is_none());
+        assert!(g.unsupported(&min).is_none());
     }
 }

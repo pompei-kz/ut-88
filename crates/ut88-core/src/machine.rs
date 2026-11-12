@@ -109,7 +109,7 @@ pub struct Snapshot {
     pub expansions: Vec<(String, Vec<u8>)>,
 }
 
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
 const SNAPSHOT_MAGIC: &[u8; 8] = b"UT88SNAP";
 
 /// Ошибка снимка.
@@ -450,21 +450,82 @@ impl Machine {
             .map(|r| r.to_signal(now, WAV_RATE))
     }
 
-    /// Вставить «кассету» и начать воспроизведение с текущего момента.
-    pub fn tape_play(&mut self, signal: TapeSignal) {
-        self.bus.st.player = Some(TapePlayer {
-            signal,
-            start_tick: self.master_ticks(),
-            threshold: 0,
-            invert: false,
-        });
+    /// Вставить «кассету»: лента стоит в начале и тронется сама при первом чтении
+    /// программой порта магнитофона (или по [`Machine::tape_start`]).
+    pub fn tape_insert(&mut self, signal: TapeSignal) {
+        self.bus.st.player = Some(TapePlayer::new(signal));
     }
 
-    /// Воспроизвести WAV-файл.
-    pub fn tape_play_wav(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
+    /// Вставить WAV-файл (см. [`Machine::tape_insert`]).
+    pub fn tape_insert_wav(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
         let s = TapeSignal::load_wav(path)?;
-        self.tape_play(s);
+        self.tape_insert(s);
         Ok(())
+    }
+
+    /// Вставить «кассету» и сразу пустить ленту.
+    pub fn tape_play(&mut self, signal: TapeSignal) {
+        self.tape_insert(signal);
+        self.tape_start();
+    }
+
+    /// Пустить ленту («Воспроизведение»; кончившаяся лента сначала перематывается в
+    /// начало); `false` — кассеты нет.
+    pub fn tape_start(&mut self) -> bool {
+        let now = self.master_ticks();
+        match &mut self.bus.st.player {
+            Some(p) => {
+                if p.finished(now) {
+                    p.rewind();
+                }
+                p.start(now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Остановить ленту («Стоп»), позиция сохраняется; `false` — кассеты нет.
+    pub fn tape_pause(&mut self) -> bool {
+        let now = self.master_ticks();
+        match &mut self.bus.st.player {
+            Some(p) => {
+                p.pause(now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Перемотать ленту в начало (лента стоит, автопуск взведён).
+    pub fn tape_rewind(&mut self) -> bool {
+        match &mut self.bus.st.player {
+            Some(p) => {
+                p.rewind();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Лента движется (и ещё не кончилась).
+    pub fn tape_playing(&self) -> bool {
+        let now = self.master_ticks();
+        self.bus
+            .st
+            .player
+            .as_ref()
+            .is_some_and(|p| p.playing() && !p.finished(now))
+    }
+
+    /// Кассета вставлена.
+    pub fn tape_inserted(&self) -> bool {
+        self.bus.st.player.is_some()
+    }
+
+    /// Лента стоит, но тронется при первом чтении порта магнитофона.
+    pub fn tape_auto_start(&self) -> bool {
+        self.bus.st.player.as_ref().is_some_and(|p| p.auto_start)
     }
 
     /// Порог и инверсия входа (для записей с постоянной составляющей).
@@ -476,7 +537,7 @@ impl Machine {
     }
 
     /// Вынуть кассету.
-    pub fn tape_stop(&mut self) {
+    pub fn tape_eject(&mut self) {
         self.bus.st.player = None;
     }
 

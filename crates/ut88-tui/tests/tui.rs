@@ -244,13 +244,73 @@ fn snapshot_roundtrip_via_prompts() {
         }
         app.on_key(key(KeyCode::Enter));
     };
-    app.on_key(key(KeyCode::F(6)));
+    // Меню F1: «a» — сохранить снимок в файл, «o» — загрузить из файла.
+    app.on_key(key(KeyCode::F(1)));
+    app.on_key(key(KeyCode::Char('a')));
     type_path(&mut app);
     app.m.poke(0xC000, 0);
-    app.on_key(key(KeyCode::F(7)));
+    app.on_key(key(KeyCode::F(1)));
+    app.on_key(key(KeyCode::Char('o')));
     type_path(&mut app);
     assert_eq!(app.m.peek(0xC000), 0xAB);
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn quick_snapshot_f6_f7() {
+    let path = std::env::temp_dir().join(format!("ut88-tui-quick-{}.snap", std::process::id()));
+    let opts = Options {
+        quick_snapshot: path.clone(),
+        ..Options::default()
+    };
+    let mut app = App::new(Machine::new(Config::minimal()), opts);
+    app.m.poke(0xC000, 0x5A);
+    app.on_key(key(KeyCode::F(6)));
+    assert!(app.overlay.is_none(), "F6 сохраняет без вопросов");
+    app.m.poke(0xC000, 0);
+    app.on_key(key(KeyCode::F(7)));
+    assert_eq!(app.m.peek(0xC000), 0x5A);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn speeds_shared_with_gui() {
+    let opts = Options {
+        speed: 16.0,
+        ..Options::default()
+    };
+    let mut app = App::new(Machine::new(Config::minimal()), opts);
+    assert_eq!(app.speed, 16.0);
+    app.on_key(key(KeyCode::F(5)));
+    assert_eq!(app.speed, 0.0, "после ×16 — максимум");
+    for _ in 0..10 {
+        app.on_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
+    }
+    assert_eq!(app.speed, 0.25, "самая медленная — ×0,25");
+}
+
+#[test]
+fn programs_menu_checks_config() {
+    let mut app = App::new(Machine::new(Config::minimal()), Options::default());
+    app.on_key(key(KeyCode::F(9)));
+    for _ in 0..20 {
+        if let Some(ut88_tui::app::Overlay::Programs(l, s)) = &app.overlay
+            && l[*s].name == "tetris"
+        {
+            break;
+        }
+        app.on_key(key(KeyCode::Down));
+    }
+    let text = render(&app, 100, 30);
+    assert!(text.contains("нужен дисплейный модуль"), "{text}");
+    let pc = app.m.cpu.pc;
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(app.m.cpu.pc, pc, "«Тетрис» не запущен в минимальной");
+    assert_eq!(app.m.peek(0x3000), 0xFF, "и не загружен");
+    assert!(matches!(
+        app.overlay,
+        Some(ut88_tui::app::Overlay::Programs(..))
+    ));
 }
 
 #[test]

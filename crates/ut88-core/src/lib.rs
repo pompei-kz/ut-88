@@ -15,6 +15,7 @@ pub mod keys;
 pub mod machine;
 pub mod roms;
 pub mod screen;
+pub mod speed;
 pub mod tape;
 
 pub use bus::{Expansion, MemAccess};

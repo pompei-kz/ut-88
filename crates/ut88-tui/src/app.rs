@@ -19,8 +19,8 @@ use crate::keymap::{self, HOTKEYS, Hotkey};
 use crate::programs::{self, Program};
 use crate::widgets::{self, INDICATORS_W, Indicators, ScreenView};
 
-/// Ряд скоростей (0 — максимум).
-pub const SPEEDS: [f64; 9] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 0.0];
+/// Ряд скоростей (0 — максимум) — общий с GUI.
+pub use ut88_core::speed::SPEEDS;
 
 /// Экран.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,8 @@ pub enum MenuAction {
     Hot(Hotkey),
     ToggleView,
     ToggleClock,
+    SaveSnapshotAs,
+    LoadSnapshotFrom,
 }
 
 /// Пункты главного меню: буква, подпись, действие.
@@ -99,13 +101,19 @@ pub const MENU: &[(char, &str, MenuAction)] = &[
     ),
     (
         's',
-        "сохранить снимок                      [F6]",
+        "быстрый снимок                        [F6]",
         MenuAction::Hot(Hotkey::SaveSnapshot),
     ),
     (
         'l',
-        "загрузить снимок                      [F7]",
+        "загрузить быстрый снимок              [F7]",
         MenuAction::Hot(Hotkey::LoadSnapshot),
+    ),
+    ('a', "сохранить снимок в файл…", MenuAction::SaveSnapshotAs),
+    (
+        'o',
+        "загрузить снимок из файла…",
+        MenuAction::LoadSnapshotFrom,
     ),
     (
         't',
@@ -137,7 +145,9 @@ pub const MENU: &[(char, &str, MenuAction)] = &[
 
 /// Пункты меню магнитофона.
 pub const TAPE_MENU: &[(char, &str)] = &[
-    ('w', "вставить кассету (WAV) и воспроизвести"),
+    ('w', "вставить кассету (WAV); лента тронется при чтении"),
+    ('p', "воспроизведение / стоп"),
+    ('n', "перемотать в начало"),
     ('s', "вынуть кассету"),
     ('r', "запись выхода в WAV: начать / остановить"),
     ('b', "быстро загрузить .bin по адресу"),
@@ -228,7 +238,7 @@ impl App {
     pub fn new(m: Machine, opts: Options) -> Self {
         let pad_view = m.config().display.is_none();
         let speed = if opts.speed.is_finite() && opts.speed >= 0.0 {
-            opts.speed
+            ut88_core::speed::snap_speed(opts.speed)
         } else {
             1.0
         };
@@ -377,20 +387,16 @@ impl App {
                 }
             }
             Hotkey::SpeedUp | Hotkey::SpeedDown => {
-                let i = SPEEDS.iter().position(|&s| s == self.speed).unwrap_or(3);
-                let j = if hk == Hotkey::SpeedUp {
-                    (i + 1).min(SPEEDS.len() - 1)
-                } else {
-                    i.saturating_sub(1)
-                };
-                self.speed = SPEEDS[j];
+                self.speed = ut88_core::speed::speed_step(self.speed, hk == Hotkey::SpeedUp);
                 self.say(format!("Скорость: {}", speed_name(self.speed)));
             }
             Hotkey::SaveSnapshot => {
-                self.ask("Сохранить снимок в файл", "ut88.snap", Ask::SaveSnapshot)
+                let p = self.opts.quick_snapshot.display().to_string();
+                self.prompt_done(Ask::SaveSnapshot, p);
             }
             Hotkey::LoadSnapshot => {
-                self.ask("Загрузить снимок из файла", "ut88.snap", Ask::LoadSnapshot)
+                let p = self.opts.quick_snapshot.display().to_string();
+                self.prompt_done(Ask::LoadSnapshot, p);
             }
             Hotkey::Tape => self.overlay = Some(Overlay::Tape(0)),
             Hotkey::Programs => {
@@ -514,6 +520,12 @@ impl App {
                     self.pad_view = !self.pad_view;
                 }
             }
+            MenuAction::SaveSnapshotAs => {
+                self.ask("Сохранить снимок в файл", "ut88.snap", Ask::SaveSnapshot)
+            }
+            MenuAction::LoadSnapshotFrom => {
+                self.ask("Загрузить снимок из файла", "ut88.snap", Ask::LoadSnapshot)
+            }
             MenuAction::ToggleClock => {
                 let on = !self.m.config().clock_interrupts;
                 self.m.set_clock_interrupts(on);
@@ -536,9 +548,25 @@ impl App {
 
     fn tape_action(&mut self, c: char) {
         match c {
-            'w' => self.ask("Воспроизвести WAV-файл", "", Ask::TapeWav),
+            'w' => self.ask("Вставить кассету — WAV-файл", "", Ask::TapeWav),
+            'p' => {
+                if !self.m.tape_inserted() {
+                    self.say("Кассета не вставлена (F8 w)");
+                } else if self.m.tape_playing() {
+                    self.m.tape_pause();
+                    self.say("Лента остановлена");
+                } else {
+                    self.m.tape_start();
+                    self.say("Воспроизведение");
+                }
+            }
+            'n' => {
+                if self.m.tape_rewind() {
+                    self.say("Лента перемотана в начало");
+                }
+            }
             's' => {
-                self.m.tape_stop();
+                self.m.tape_eject();
                 self.say("Кассета вынута");
             }
             'r' => {
@@ -566,6 +594,12 @@ impl App {
 
     fn load_program(&mut self, list: &[Program], sel: usize, run: bool) {
         let p = &list[sel];
+        if let Some(why) = p.unsupported(self.m.config()) {
+            // Окно списка остаётся открытым: можно выбрать другую программу.
+            self.overlay = Some(Overlay::Programs(list.to_vec(), sel));
+            self.say(format!("«{}» не загружена: {why}", p.title_or_name()));
+            return;
+        }
         let Some(load) = p.load else {
             self.say(format!("{}: адрес загрузки неизвестен", p.name));
             return;
@@ -582,10 +616,14 @@ impl App {
         {
             msg += &format!(", {} — в {a:04X}H", extra.name);
         }
-        if run && let Some(s) = p.start {
-            self.input.clear(&mut self.m);
-            self.m.jump(s);
-            msg += &format!(", пуск с {s:04X}H");
+        match p.start {
+            Some(s) if run => {
+                self.input.clear(&mut self.m);
+                self.m.jump(s);
+                msg += &format!(", пуск с {s:04X}H");
+            }
+            Some(s) => msg += &format!(", не запущена (адрес пуска {s:04X}H)"),
+            None => msg += ", не запущена",
         }
         if !p.config.is_empty() {
             msg += &format!(" (нужно: {})", p.config);
@@ -610,8 +648,10 @@ impl App {
                 }
                 Err(e) => self.say(format!("Ошибка: {e}")),
             },
-            Ask::TapeWav => match self.m.tape_play_wav(&text) {
-                Ok(()) => self.say(format!("Кассета: {text}")),
+            Ask::TapeWav => match self.m.tape_insert_wav(&text) {
+                Ok(()) => self.say(format!(
+                    "Кассета {text} вставлена; лента тронется при чтении (A / I) или F8 p"
+                )),
                 Err(e) => self.say(format!("Ошибка: {e}")),
             },
             Ask::RecordSave(sig) => match sig.save_wav(&text) {
@@ -836,7 +876,9 @@ impl App {
         let mut s = match self.m.tape_position() {
             None => "нет".to_string(),
             Some(p) if self.m.tape_finished() => format!("конец ({p:.1} с)"),
-            Some(p) => format!("▶ {p:.1} с"),
+            Some(p) if self.m.tape_playing() => format!("▶ {p:.1} с"),
+            Some(p) if self.m.tape_auto_start() => format!("⏹ {p:.1} с, ждёт чтения"),
+            Some(p) => format!("⏹ {p:.1} с, стоп"),
         };
         if self.m.tape_recording() {
             s += " ● запись";
@@ -1167,15 +1209,28 @@ impl App {
                             a.map(|a| format!("{a:04X}"))
                                 .unwrap_or_else(|| "  — ".into())
                         };
-                        ListItem::new(format!(
+                        let item = ListItem::new(format!(
                             " {:<16} {} → {}  {}",
                             p.name,
                             ad(p.load),
                             ad(p.start),
                             p.title
-                        ))
+                        ));
+                        if p.unsupported(self.m.config()).is_some() {
+                            item.style(Style::default().fg(Color::DarkGray))
+                        } else {
+                            item
+                        }
                     })
                     .collect();
+                let mut items = items;
+                let note = list
+                    .get(*sel)
+                    .and_then(|p| p.unsupported(self.m.config()))
+                    .map(|w| format!(" ✗ {w}"))
+                    .unwrap_or_default();
+                items.push(ListItem::new(""));
+                items.push(ListItem::new(note).style(Style::default().fg(Color::Red)));
                 let r = centered(area, 76, items.len() as u16 + 2);
                 self.list_popup(
                     f,

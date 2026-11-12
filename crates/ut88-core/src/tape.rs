@@ -147,13 +147,22 @@ fn samples_to_ticks(n: u64, rate: u32) -> u64 {
     (u128::from(n) * u128::from(MASTER_HZ) / u128::from(rate)) as u64
 }
 
-/// Воспроизводимая «кассета»: сигнал подаётся на вход порта A1H (бит 0).
+/// «Кассета» в магнитофоне: сигнал подаётся на вход порта A1H (бит 0).
+///
+/// Вставленная кассета стоит, пока её не запустят: явной командой
+/// ([`TapePlayer::start`]) или автоматически — при первом чтении программой порта
+/// магнитофона после вставки (имитация: МОНИТОР начал читать — пользователь нажал
+/// «Воспроизведение»). Остановленная лента подаёт на вход 0.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapePlayer {
     /// Сигнал.
     pub signal: TapeSignal,
-    /// Такт (16 МГц), с которого началось воспроизведение.
-    pub start_tick: u64,
+    /// Позиция ленты (тактов 16 МГц от её начала) в момент последнего пуска или останова.
+    pub offset: u64,
+    /// Такт (16 МГц) последнего пуска; `None` — лента стоит.
+    pub start_tick: Option<u64>,
+    /// Запустить ленту при первом чтении порта магнитофона.
+    pub auto_start: bool,
     /// Порог: отсчёт больше порога — логическая 1.
     pub threshold: i16,
     /// Инвертировать уровень (МОНИТОРЫ умеют сами, но вдруг).
@@ -161,18 +170,67 @@ pub struct TapePlayer {
 }
 
 impl TapePlayer {
-    /// Уровень на входе в момент `tick`; `None` — лента кончилась.
-    pub fn level_at(&self, tick: u64) -> Option<bool> {
-        let k = ticks_to_samples(tick.saturating_sub(self.start_tick), self.signal.rate) as usize;
-        self.signal
-            .samples
-            .get(k)
-            .map(|&s| (s > self.threshold) != self.invert)
+    /// Вставленная кассета: лента стоит в начале, автопуск взведён.
+    pub fn new(signal: TapeSignal) -> Self {
+        Self {
+            signal,
+            offset: 0,
+            start_tick: None,
+            auto_start: true,
+            threshold: 0,
+            invert: false,
+        }
     }
 
-    /// Позиция воспроизведения в секундах.
+    /// Позиция ленты в тактах 16 МГц от её начала.
+    fn pos_ticks(&self, tick: u64) -> u64 {
+        match self.start_tick {
+            Some(t0) => self.offset + tick.saturating_sub(t0),
+            None => self.offset,
+        }
+    }
+
+    /// Лента движется.
+    pub fn playing(&self) -> bool {
+        self.start_tick.is_some()
+    }
+
+    /// Пустить ленту с текущей позиции (с такта `tick`).
+    pub fn start(&mut self, tick: u64) {
+        if self.start_tick.is_none() {
+            self.start_tick = Some(tick);
+        }
+        self.auto_start = false;
+    }
+
+    /// Остановить ленту в такте `tick` (позиция сохраняется, автопуск снимается).
+    pub fn pause(&mut self, tick: u64) {
+        self.offset = self.pos_ticks(tick);
+        self.start_tick = None;
+        self.auto_start = false;
+    }
+
+    /// Перемотать в начало и остановить; автопуск взводится снова.
+    pub fn rewind(&mut self) {
+        self.offset = 0;
+        self.start_tick = None;
+        self.auto_start = true;
+    }
+
+    /// Уровень на входе в момент `tick`; `None` — лента кончилась.
+    pub fn level_at(&self, tick: u64) -> Option<bool> {
+        let k = ticks_to_samples(self.pos_ticks(tick), self.signal.rate) as usize;
+        let s = *self.signal.samples.get(k)?;
+        if self.playing() {
+            Some((s > self.threshold) != self.invert)
+        } else {
+            Some(false)
+        }
+    }
+
+    /// Позиция воспроизведения в секундах (не дальше конца ленты).
     pub fn position(&self, tick: u64) -> f64 {
-        tick.saturating_sub(self.start_tick) as f64 / MASTER_HZ as f64
+        (self.pos_ticks(tick) as f64 / MASTER_HZ as f64).min(self.signal.duration())
     }
 
     /// Лента кончилась.

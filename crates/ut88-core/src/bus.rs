@@ -274,7 +274,15 @@ impl i8080::Bus for Bus {
             0xA0..=0xAF if port & 1 == 0 => self.st.cpu_module.keyboard(),
             // Магнитофон отвечает только разрядом D0 (DD12.4 с открытым коллектором),
             // остальные разряды шины читаются как 1.
-            0xA0..=0xAF => 0xFE | u8::from(self.tape_in()),
+            0xA0..=0xAF => {
+                let t = self.st.now + 7 * CPU_DIV;
+                if let Some(p) = &mut self.st.player
+                    && p.auto_start
+                {
+                    p.start(t);
+                }
+                0xFE | u8::from(self.tape_in())
+            }
             _ => 0xFF,
         }
     }

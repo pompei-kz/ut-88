@@ -11,8 +11,23 @@ use anyhow::{Context, Result, anyhow, bail};
 pub struct Image {
     /// Куски памяти.
     pub chunks: Vec<(u16, Vec<u8>)>,
-    /// Адрес пуска (из таблицы программ или записи 03/05 Intel HEX).
+    /// Адрес пуска (из таблицы программ или записи 03/05 Intel HEX). Если образ сдвинут
+    /// (загружен не по своему адресу), адрес пуска не известен: программы не
+    /// перемещаемы.
     pub start: Option<u16>,
+    /// Откуда взят адрес пуска.
+    pub start_source: Option<StartSource>,
+    /// Образ сдвинут: исходный первый адрес (из файла или таблицы программ).
+    pub relocated_from: Option<u16>,
+}
+
+/// Откуда взят адрес пуска образа.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartSource {
+    /// Запись 03/05 Intel HEX.
+    File,
+    /// Таблица `programs/README.md`.
+    Table,
 }
 
 impl Image {
@@ -139,8 +154,10 @@ pub fn parse_intel_hex(text: &str) -> Result<Image> {
             0x01 => break,
             0x02 if n == 2 => base = u32::from(u16::from_be_bytes([data[0], data[1]])) << 4,
             0x04 if n == 2 => base = u32::from(u16::from_be_bytes([data[0], data[1]])) << 16,
-            0x03 if n == 4 => img.start = Some(u16::from_be_bytes([data[2], data[3]])),
-            0x05 if n == 4 => img.start = Some(u16::from_be_bytes([data[2], data[3]])),
+            0x03 | 0x05 if n == 4 => {
+                img.start = Some(u16::from_be_bytes([data[2], data[3]]));
+                img.start_source = Some(StartSource::File);
+            }
             t => bail!("строка {}: неизвестная запись {t:02X}", no + 1),
         }
     }
@@ -198,7 +215,8 @@ pub fn load_file(path: &Path, addr: Option<u16>, table: &[ProgramInfo]) -> Resul
             })?;
             Image {
                 chunks: vec![(a, data)],
-                start: None,
+                relocated_from: info.filter(|i| i.load != a).map(|i| i.load),
+                ..Image::default()
             }
         }
         Format::IntelHex => parse_intel_hex(&String::from_utf8_lossy(&data))?,
@@ -211,11 +229,18 @@ pub fn load_file(path: &Path, addr: Option<u16>, table: &[ProgramInfo]) -> Resul
         for c in &mut img.chunks {
             c.0 = c.0.wrapping_add(delta);
         }
+        img.relocated_from = Some(first);
     }
-    if img.start.is_none()
+    if img.relocated_from.is_some() {
+        // Программы журнала не перемещаемы: прежний адрес пуска после сдвига неверен.
+        img.start = None;
+        img.start_source = None;
+    } else if img.start.is_none()
         && let Some(i) = info
+        && i.start.is_some()
     {
         img.start = i.start;
+        img.start_source = Some(StartSource::Table);
     }
     Ok(img)
 }
@@ -399,12 +424,19 @@ mod tests {
             assert_eq!(bin.start, p.start);
             assert_eq!(bin.chunks[0].1, hex.chunks.concat_bytes(), "{}", p.name);
         }
-        assert!(
-            load_file(&dir.join("gamma.bin"), Some(0xC100), &table)
-                .unwrap()
-                .first_addr()
-                == Some(0xC100)
+        let moved = load_file(&dir.join("gamma.bin"), Some(0xC100), &table).unwrap();
+        assert_eq!(moved.first_addr(), Some(0xC100));
+        assert_eq!(moved.relocated_from, Some(0xC000));
+        assert_eq!(
+            moved.start, None,
+            "после сдвига адрес пуска из README неверен"
         );
+        let same = load_file(&dir.join("gamma.bin"), Some(0xC000), &table).unwrap();
+        assert_eq!(same.start, Some(0xC03E));
+        assert_eq!(same.start_source, Some(StartSource::Table));
+        assert_eq!(same.relocated_from, None);
+        let hex = load_file(&dir.join("gamma.hex"), Some(0xC100), &table).unwrap();
+        assert_eq!((hex.relocated_from, hex.start), (Some(0xC000), None));
     }
 
     trait Concat {
