@@ -215,18 +215,23 @@ impl Cpu {
         bus.write(addr.wrapping_add(1), hi);
     }
 
+    // Обращения к стеку идут через `read_stack`/`write_stack`: у КР580ВМ80А в этих
+    // машинных циклах в слове состояния установлен бит STACK (D2), по нему, например,
+    // квазидиск ЮТ-88 перехватывает стек.
+
     fn push<B: Bus + ?Sized>(&mut self, bus: &mut B, v: u16) {
         let [lo, hi] = v.to_le_bytes();
         self.sp = self.sp.wrapping_sub(1);
-        bus.write(self.sp, hi);
+        bus.write_stack(self.sp, hi);
         self.sp = self.sp.wrapping_sub(1);
-        bus.write(self.sp, lo);
+        bus.write_stack(self.sp, lo);
     }
 
     fn pop<B: Bus + ?Sized>(&mut self, bus: &mut B) -> u16 {
-        let v = Self::read16(bus, self.sp);
+        let lo = bus.read_stack(self.sp);
+        let hi = bus.read_stack(self.sp.wrapping_add(1));
         self.sp = self.sp.wrapping_add(2);
-        v
+        u16::from_le_bytes([lo, hi])
     }
 
     /// Регистр по 3-битному коду: 0 B, 1 C, 2 D, 3 E, 4 H, 5 L, 6 M, 7 A.
@@ -623,9 +628,13 @@ impl Cpu {
             }
             // XTHL
             0xE3 => {
-                let v = Self::read16(bus, self.sp);
-                Self::write16(bus, self.sp, self.hl());
-                self.set_hl(v);
+                // Порядок циклов, как у КР580ВМ80А: чтение SP, SP+1, запись SP+1 (H), SP (L).
+                let sp1 = self.sp.wrapping_add(1);
+                let lo = bus.read_stack(self.sp);
+                let hi = bus.read_stack(sp1);
+                bus.write_stack(sp1, self.h);
+                bus.write_stack(self.sp, self.l);
+                self.set_hl(u16::from_le_bytes([lo, hi]));
                 18
             }
             // PCHL

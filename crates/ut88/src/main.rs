@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
-use ut88_core::{Config, Machine};
+use ut88_core::{Config, Machine, System};
 use ut88_gui::loader::{self, Image, ProgramInfo, StartSource, parse_hex_u16, parse_load_arg};
 use ut88_gui::{GuiOptions, Speed};
 
@@ -18,15 +18,60 @@ enum ConfigKind {
     /// Полная, но с включённым ПЗУ МОНИТОРА модуля 1 (МОНИТОР-F — директивой 7 F800).
     #[value(name = "full-monitor0")]
     FullMonitor0,
+    /// Для CP/M и ОС ЮТ-88: полная + квазидиск (порт 40H).
+    Cpm,
+}
+
+/// Система для загрузки ключом `--boot`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum BootKind {
+    /// CP/M-64 с квазидиском (roms/cpm64.bin, G3100).
+    Cpm64,
+    /// CP/M-35 без квазидиска (roms/cpm35.bin, G4A00).
+    Cpm35,
+    /// ОС ЮТ-88 (roms/ut88-os.bin, G3000).
+    Os,
+}
+
+impl BootKind {
+    fn system(self) -> System {
+        match self {
+            BootKind::Cpm64 => System::Cpm64,
+            BootKind::Cpm35 => System::Cpm35,
+            BootKind::Os => System::Ut88Os,
+        }
+    }
 }
 
 /// Эмулятор компьютера ЮТ-88 (журнал «ЮТ для умелых рук», 1989–1990).
 #[derive(Parser, Debug)]
 #[command(name = "ut88", version, about)]
 struct Args {
-    /// Конфигурация машины.
-    #[arg(long, value_enum, default_value = "full")]
-    config: ConfigKind,
+    /// Конфигурация машины (по умолчанию full, с --boot — cpm).
+    #[arg(long, value_enum)]
+    config: Option<ConfigKind>,
+
+    /// Объём квазидиска, Кбайт (64, 128, 192, 256; для --config cpm).
+    #[arg(long, value_name = "КБАЙТ", default_value = "256", value_parser = parse_kd_size)]
+    kvazidisk_size: u8,
+
+    /// Образ квазидиска: загрузить при запуске (если файл есть) и сохранить при выходе.
+    #[arg(long, value_name = "ФАЙЛ")]
+    kvazidisk: Option<PathBuf>,
+
+    /// Загрузить и запустить систему из распечаток журнала 1990-02.
+    #[arg(long, value_enum, value_name = "СИСТЕМА")]
+    boot: Option<BootKind>,
+
+    /// С --boot cpm64/cpm35: очистить диск CP/M (иначе файлы на нём сохраняются, если
+    /// там уже есть каталог, — например, из образа --kvazidisk).
+    #[arg(long)]
+    cpm_format: bool,
+
+    /// Записать файл ПК на диск CP/M (после --boot) под его именем или под именем
+    /// ИМЯ.РАС после «=». Можно повторять.
+    #[arg(long, value_name = "ФАЙЛ[=ИМЯ.РАС]")]
+    cpm_put: Vec<String>,
 
     /// Образ ПЗУ МОНИТОРА модуля 1 (до 1 Кбайта) вместо встроенного monitor-fixed.bin.
     #[arg(long, value_name = "ФАЙЛ")]
@@ -80,12 +125,32 @@ fn parse_speed(s: &str) -> Result<f64, String> {
     ut88_core::speed::parse_speed(s)
 }
 
+fn parse_kd_size(s: &str) -> Result<u8, String> {
+    match s.trim().trim_end_matches(['K', 'k']) {
+        "64" => Ok(1),
+        "128" => Ok(2),
+        "192" => Ok(3),
+        "256" => Ok(4),
+        _ => Err("объём квазидиска: 64, 128, 192 или 256".into()),
+    }
+}
+
+/// Конфигурация по ключу `--config` (с `--boot` по умолчанию — cpm).
+fn config_kind(args: &Args) -> ConfigKind {
+    args.config.unwrap_or(if args.boot.is_some() {
+        ConfigKind::Cpm
+    } else {
+        ConfigKind::Full
+    })
+}
+
 /// Конфигурация по ключам.
 fn make_config(args: &Args) -> Result<Config> {
-    let mut c = match args.config {
+    let mut c = match config_kind(args) {
         ConfigKind::Minimal => Config::minimal(),
         ConfigKind::Full => Config::full(),
         ConfigKind::FullMonitor0 => Config::full_with_monitor0(),
+        ConfigKind::Cpm => Config::cpm().with_kvazidisk(args.kvazidisk_size),
     };
     if let Some(p) = &args.rom {
         let rom = std::fs::read(p).with_context(|| format!("не читается ПЗУ {}", p.display()))?;
@@ -96,6 +161,20 @@ fn make_config(args: &Args) -> Result<Config> {
     }
     if args.calculator {
         c = c.with_calculator();
+    }
+    if let Some(b) = args.boot
+        && !b.system().suits(&c)
+    {
+        bail!(
+            "{} не работает в конфигурации {:?}: нужна cpm{}",
+            b.system().title(),
+            config_kind(args),
+            if b == BootKind::Cpm64 {
+                ""
+            } else {
+                " или full"
+            }
+        );
     }
     Ok(c)
 }
@@ -114,7 +193,40 @@ fn build_machine(args: &Args, table: &[ProgramInfo]) -> Result<Machine> {
         }
         None => Machine::new(make_config(args)?),
     };
-    if args.snapshot.is_none() && (!args.load.is_empty() || args.run.is_some()) {
+    if args.snapshot.is_some() && args.boot.is_some() {
+        bail!("--boot и --snapshot вместе не используются");
+    }
+    if let Some(p) = &args.kvazidisk {
+        if !m.has_kvazidisk() {
+            bail!("--kvazidisk: в конфигурации нет квазидиска (нужна --config cpm)");
+        }
+        if p.exists() {
+            m.load_kvazidisk_file(p).map_err(anyhow::Error::msg)?;
+            eprintln!("ut88: образ квазидиска {} загружен", p.display());
+        } else {
+            eprintln!("ut88: образа {} нет — будет создан при выходе", p.display());
+        }
+    }
+    if let Some(b) = args.boot {
+        let msg = m
+            .boot_system(b.system(), !args.cpm_format)
+            .map_err(anyhow::Error::msg)?;
+        eprintln!("ut88: {msg}");
+    }
+    for p in &args.cpm_put {
+        if args.boot.is_none() || args.boot == Some(BootKind::Os) {
+            bail!("--cpm-put нужен --boot cpm64 или --boot cpm35");
+        }
+        let (path, name) = ut88_core::cpm::split_put_arg(p);
+        let msg = m
+            .cpm_put_file(&path, name.as_deref())
+            .map_err(anyhow::Error::msg)?;
+        eprintln!("ut88: {msg}");
+    }
+    if args.snapshot.is_none()
+        && args.boot.is_none()
+        && (!args.load.is_empty() || args.run.is_some())
+    {
         // Дать МОНИТОРУ установить стек и рабочие ячейки, иначе он затрёт программу или
         // программа уйдёт в незаданный стек.
         m.run_seconds(BOOT_SECONDS);
@@ -183,6 +295,7 @@ fn main() -> Result<()> {
             speed: args.speed,
             sound: !args.no_sound,
             programs_dir: programs_dir.clone(),
+            kvazidisk_file: args.kvazidisk.clone(),
             ..Default::default()
         };
         ut88_tui::run(machine, opts)
@@ -192,6 +305,7 @@ fn main() -> Result<()> {
             speed: Speed::from_factor(args.speed),
             sound: !args.no_sound,
             programs_dir,
+            kvazidisk_file: args.kvazidisk.clone(),
         })
     }
 }
@@ -226,13 +340,23 @@ mod tests {
             "--tui",
         ])
         .unwrap();
-        assert_eq!(a.config, ConfigKind::FullMonitor0);
+        assert_eq!(a.config, Some(ConfigKind::FullMonitor0));
         assert_eq!(a.load.len(), 2);
         assert_eq!(a.run, Some(0xC000));
         assert_eq!(a.speed, 0.0);
         assert!(a.no_sound && a.tui);
         let a = Args::try_parse_from(["ut88"]).unwrap();
-        assert_eq!(a.config, ConfigKind::Full);
+        assert_eq!(config_kind(&a), ConfigKind::Full);
+        let a = Args::try_parse_from(["ut88", "--boot", "cpm64"]).unwrap();
+        assert_eq!(config_kind(&a), ConfigKind::Cpm);
+        let a =
+            Args::try_parse_from(["ut88", "--config", "cpm", "--kvazidisk-size", "128"]).unwrap();
+        assert_eq!(make_config(&a).unwrap().kvazidisk, 2);
+        assert!(Args::try_parse_from(["ut88", "--kvazidisk-size", "100"]).is_err());
+        let a = Args::try_parse_from(["ut88", "--config", "full", "--boot", "cpm64"]).unwrap();
+        assert!(make_config(&a).is_err(), "CP/M-64 без квазидиска");
+        let a = Args::try_parse_from(["ut88", "--config", "full", "--boot", "cpm35"]).unwrap();
+        assert!(make_config(&a).is_ok());
         assert_eq!(a.speed, 1.0);
         assert!(Args::try_parse_from(["ut88", "--run", "XYZ"]).is_err());
         assert!(Args::try_parse_from(["ut88", "--speed", "fast"]).is_err());
@@ -333,5 +457,60 @@ mod tests {
     fn rom_too_big_rejected() {
         let a = Args::try_parse_from(["ut88", "--rom", &repo("roms/monitor-f.bin")]).unwrap();
         assert!(make_config(&a).is_err());
+    }
+
+    #[test]
+    fn boot_cpm64_with_put_and_image() {
+        let dir = std::env::temp_dir().join(format!("ut88-cli-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("disk.img");
+        let _ = std::fs::remove_file(&img);
+        let ch = format!("{}=ch.com", repo("roms/cpm-ch-com.bin"));
+        let a = Args::try_parse_from([
+            "ut88",
+            "--boot",
+            "cpm64",
+            "--kvazidisk",
+            img.to_str().unwrap(),
+            "--cpm-put",
+            &ch,
+        ])
+        .unwrap();
+        let mut m = build_machine(&a, &table()).unwrap();
+        assert_eq!(m.cpu.pc, 0xDA00);
+        let files = m.cpm_list(ut88_core::CpmDisk::Kvazidisk).unwrap();
+        assert_eq!(files[0].name, "CH.COM");
+        m.save_kvazidisk_file(&img).unwrap();
+        // Второй запуск с тем же образом: файлы сохраняются.
+        let a2 = Args::try_parse_from([
+            "ut88",
+            "--boot",
+            "cpm64",
+            "--kvazidisk",
+            img.to_str().unwrap(),
+        ])
+        .unwrap();
+        let mut m = build_machine(&a2, &table()).unwrap();
+        let files = m.cpm_list(ut88_core::CpmDisk::Kvazidisk).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "CH.COM");
+        // --cpm-format очищает диск.
+        let a3 = Args::try_parse_from([
+            "ut88",
+            "--boot",
+            "cpm64",
+            "--cpm-format",
+            "--kvazidisk",
+            img.to_str().unwrap(),
+        ])
+        .unwrap();
+        let mut m = build_machine(&a3, &table()).unwrap();
+        assert!(
+            m.cpm_list(ut88_core::CpmDisk::Kvazidisk)
+                .unwrap()
+                .is_empty()
+        );
+        let a = Args::try_parse_from(["ut88", "--boot", "os", "--cpm-put", "x.com"]).unwrap();
+        assert!(build_machine(&a, &table()).is_err());
     }
 }

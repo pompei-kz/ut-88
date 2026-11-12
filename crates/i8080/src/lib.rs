@@ -23,4 +23,15 @@ pub trait Bus {
     fn input(&mut self, port: u8) -> u8;
     /// Команда `OUT port`.
     fn output(&mut self, port: u8, v: u8);
+    /// Чтение байта стека: машинный цикл, в слове состояния которого установлен бит
+    /// STACK (D2) — `POP`, `RET`/`Rcc`, `XTHL`. По умолчанию — обычное [`Bus::read`].
+    fn read_stack(&mut self, addr: u16) -> u8 {
+        self.read(addr)
+    }
+    /// Запись байта в стек: цикл с битом STACK — `PUSH`, `CALL`/`Ccc`, `RST`, `XTHL`,
+    /// запись адреса возврата при приёме прерывания. По умолчанию — обычное
+    /// [`Bus::write`].
+    fn write_stack(&mut self, addr: u16, v: u8) {
+        self.write(addr, v)
+    }
 }

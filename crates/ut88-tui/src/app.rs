@@ -13,7 +13,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use ut88_core::screen::{COLS, ROWS};
-use ut88_core::{CPU_HZ, FRAME_CYCLES, Machine, PadKey, TapeFormat, TapeSignal};
+use ut88_core::{CPU_HZ, FRAME_CYCLES, Machine, PadKey, System, TapeFormat, TapeSignal};
 
 use crate::Options;
 use crate::debugger::{self, Debugger, Stop};
@@ -52,6 +52,12 @@ pub enum Ask {
     RunTo,
     MemGoto,
     DisasmGoto,
+    CpmPut,
+    CpmGet,
+    CpmGetPath(String),
+    CpmDelete,
+    KvazidiskSave,
+    KvazidiskLoad,
 }
 
 /// Строка ввода.
@@ -71,6 +77,8 @@ pub enum MenuAction {
     Hot(Hotkey),
     ToggleView,
     ToggleClock,
+    ToggleMonitorF,
+    Cpm,
     SaveSnapshotAs,
     LoadSnapshotFrom,
     Help,
@@ -140,6 +148,12 @@ pub const MENU: &[(char, &str, MenuAction)] = &[
         MenuAction::ToggleView,
     ),
     ('i', "прерывания часов вкл/выкл", MenuAction::ToggleClock),
+    (
+        'r',
+        "ПЗУ МОНИТОРА-F вкл/выкл (тумблер)",
+        MenuAction::ToggleMonitorF,
+    ),
+    ('c', "CP/M, ОС ЮТ-88, квазидиск…", MenuAction::Cpm),
     ('?', "справка: все клавиши", MenuAction::Help),
     (
         'q',
@@ -160,6 +174,20 @@ pub const TAPE_MENU: &[(char, &str)] = &[
     ('o', "записать диапазон в WAV (блок МОНИТОРА)"),
 ];
 
+/// Пункты меню CP/M.
+pub const CPM_MENU: &[(char, &str)] = &[
+    ('6', "загрузить CP/M-64 (файлы на квазидиске сохраняются)"),
+    ('f', "загрузить CP/M-64 с чистым квазидиском"),
+    ('3', "загрузить CP/M-35 (диск в ОЗУ 5000H–DBFFH)"),
+    ('o', "загрузить ОС ЮТ-88"),
+    ('l', "список файлов на диске CP/M"),
+    ('w', "записать файл ПК на диск CP/M"),
+    ('x', "сохранить файл с диска CP/M на ПК"),
+    ('d', "удалить файл с диска CP/M"),
+    ('s', "сохранить образ квазидиска"),
+    ('i', "загрузить образ квазидиска"),
+];
+
 /// Окно поверх экрана.
 #[derive(Debug, Clone)]
 pub enum Overlay {
@@ -167,6 +195,7 @@ pub enum Overlay {
     /// Справка: горячие клавиши и клавиши ввода.
     Help,
     Tape(usize),
+    Cpm(usize),
     Programs(Vec<Program>, usize),
     Prompt(Prompt),
 }
@@ -289,10 +318,11 @@ impl App {
 
     fn config_name(&self) -> &'static str {
         let c = self.m.config();
-        match (c.display.is_some(), c.rom1_enabled) {
-            (false, _) => "минимальная",
-            (true, false) => "полная",
-            (true, true) => "полная (МОНИТОР-0)",
+        match (c.display.is_some(), c.rom1_enabled, c.kvazidisk > 0) {
+            (false, _, _) => "минимальная",
+            (true, false, false) => "полная",
+            (true, true, _) => "полная (МОНИТОР-0)",
+            (true, false, true) => "CP/M (квазидиск)",
         }
     }
 
@@ -417,7 +447,7 @@ impl App {
                 self.input.clear(&mut self.m);
                 self.m = match &self.opts.cold_start {
                     Some(f) => f(),
-                    None => Machine::new(self.m.config().clone()),
+                    None => Machine::new(self.m.cold_start_config()),
                 };
                 self.meter = (Instant::now(), self.m.cycles());
                 self.say("Холодный старт");
@@ -522,6 +552,24 @@ impl App {
                     _ => self.overlay = Some(Overlay::Tape(sel)),
                 }
             }
+            Overlay::Cpm(sel) => {
+                if ev.code == KeyCode::Esc {
+                    return;
+                }
+                if let Some(s) = up_down(sel, CPM_MENU.len()) {
+                    self.overlay = Some(Overlay::Cpm(s));
+                    return;
+                }
+                let pick = match ev.code {
+                    KeyCode::Enter => Some(CPM_MENU[sel].0),
+                    KeyCode::Char(c) => Some(c.to_ascii_lowercase()),
+                    _ => None,
+                };
+                match pick {
+                    Some(c) if CPM_MENU.iter().any(|t| t.0 == c) => self.cpm_action(c),
+                    _ => self.overlay = Some(Overlay::Cpm(sel)),
+                }
+            }
             Overlay::Programs(list, sel) => match ev.code {
                 KeyCode::Esc => {}
                 KeyCode::Up | KeyCode::Down => {
@@ -574,6 +622,20 @@ impl App {
             MenuAction::LoadSnapshotFrom => {
                 self.ask("Загрузить снимок из файла", "ut88.snap", Ask::LoadSnapshot)
             }
+            MenuAction::Cpm => self.overlay = Some(Overlay::Cpm(0)),
+            MenuAction::ToggleMonitorF => {
+                if self.m.config().display.is_none() {
+                    self.say("Дисплейного модуля нет");
+                    return;
+                }
+                let on = !self.m.config().monitor_f_rom;
+                self.m.set_monitor_f_rom(on);
+                self.say(if on {
+                    "ПЗУ МОНИТОРА-F включено"
+                } else {
+                    "ПЗУ МОНИТОРА-F выключено: F000H–FFFFH — ОЗУ"
+                });
+            }
             MenuAction::ToggleClock => {
                 let on = !self.m.config().clock_interrupts;
                 self.m.set_clock_interrupts(on);
@@ -583,6 +645,75 @@ impl App {
                     "Прерывания часов выключены"
                 });
             }
+        }
+    }
+
+    /// Загрузить систему; при неподходящей конфигурации — холодный старт в «CP/M».
+    fn boot(&mut self, sys: System, keep: bool) {
+        self.input.clear(&mut self.m);
+        if let Some(c) = sys.config_for(self.m.config()) {
+            self.m = Machine::new(c);
+        }
+        match self.m.boot_system(sys, keep) {
+            Ok(msg) => {
+                self.paused = false;
+                self.pad_view = false;
+                self.view = View::Machine;
+                self.say(msg);
+            }
+            Err(e) => self.say(format!("{} не загружена: {e}", sys.title())),
+        }
+        self.meter = (Instant::now(), self.m.cycles());
+    }
+
+    fn kvazidisk_default(&self) -> String {
+        self.opts
+            .kvazidisk_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "kvazidisk.img".into())
+    }
+
+    fn cpm_action(&mut self, c: char) {
+        match c {
+            '6' => self.boot(System::Cpm64, true),
+            'f' => self.boot(System::Cpm64, false),
+            '3' => self.boot(System::Cpm35, true),
+            'o' => self.boot(System::Ut88Os, true),
+            'l' => {
+                let disk = self.m.cpm_default_disk();
+                match self.m.cpm_list(disk) {
+                    Ok(files) if files.is_empty() => self.say("Диск CP/M: файлов нет"),
+                    Ok(files) => {
+                        let names: Vec<String> = files
+                            .iter()
+                            .map(|f| format!("{} {}", f.name, f.bytes()))
+                            .collect();
+                        self.say(format!("Диск CP/M: {}", names.join(", ")));
+                    }
+                    Err(e) => self.say(format!("Ошибка: {e}")),
+                }
+            }
+            'w' => self.ask(
+                "Файл ПК для диска CP/M (ФАЙЛ или ФАЙЛ=ИМЯ.РАС)",
+                "",
+                Ask::CpmPut,
+            ),
+            'x' => self.ask("Имя файла на диске CP/M (ИМЯ.РАС)", "", Ask::CpmGet),
+            'd' => self.ask("Удалить с диска CP/M (ИМЯ.РАС)", "", Ask::CpmDelete),
+            's' => {
+                let d = self.kvazidisk_default();
+                self.ask("Сохранить образ квазидиска в файл", &d, Ask::KvazidiskSave)
+            }
+            'i' => {
+                let d = self.kvazidisk_default();
+                self.ask(
+                    "Загрузить образ квазидиска из файла",
+                    &d,
+                    Ask::KvazidiskLoad,
+                )
+            }
+            _ => {}
         }
     }
 
@@ -793,6 +924,69 @@ impl App {
                     self.resume = true;
                 }
                 None => bad(self),
+            },
+            Ask::CpmPut => {
+                let (path, name) = ut88_core::cpm::split_put_arg(&text);
+                match self.m.cpm_put_file(&path, name.as_deref()) {
+                    Ok(msg) => self.say(msg),
+                    Err(e) => self.say(format!("Ошибка: {e}")),
+                }
+            }
+            Ask::CpmGet => {
+                let disk = self.m.cpm_default_disk();
+                match self.m.cpm_read_file(disk, &text) {
+                    Ok(_) => {
+                        let def = text.to_ascii_lowercase();
+                        self.ask("Сохранить в файл ПК", &def, Ask::CpmGetPath(text));
+                    }
+                    Err(e) => self.say(format!("Ошибка: {e}")),
+                }
+            }
+            Ask::CpmGetPath(name) => {
+                let disk = self.m.cpm_default_disk();
+                match self.m.cpm_read_file(disk, &name) {
+                    Ok(data) => match std::fs::write(&text, &data) {
+                        Ok(()) => {
+                            self.say(format!("{name} ({} байт) сохранён в {text}", data.len()))
+                        }
+                        Err(e) => self.say(format!("Ошибка: {e}")),
+                    },
+                    Err(e) => self.say(format!("Ошибка: {e}")),
+                }
+            }
+            Ask::CpmDelete => {
+                let disk = self.m.cpm_default_disk();
+                match self.m.cpm_delete_file(disk, &text) {
+                    Ok(true) => {
+                        let r = self.m.cpm_warm_boot();
+                        self.say(format!(
+                            "{text} удалён{}",
+                            if r {
+                                "; CP/M перезапущена"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                    Ok(false) => self.say(format!("На диске нет {text}")),
+                    Err(e) => self.say(format!("Ошибка: {e}")),
+                }
+            }
+            Ask::KvazidiskSave => match self.m.save_kvazidisk_file(&text) {
+                Ok(()) => {
+                    self.opts.kvazidisk_file = Some(text.clone().into());
+                    self.say(format!("Образ квазидиска сохранён: {text}"));
+                }
+                Err(e) => self.say(format!("Ошибка: {e}")),
+            },
+            Ask::KvazidiskLoad => match self.m.load_kvazidisk_file(&text) {
+                Ok(()) => {
+                    self.opts.kvazidisk_file = Some(text.clone().into());
+                    self.say(format!(
+                        "Образ {text} загружен — запустите CP/M-64 (c 6), файлы сохранятся"
+                    ));
+                }
+                Err(e) => self.say(format!("Ошибка: {e}")),
             },
             Ask::MemGoto => match parse_hex(&text) {
                 Some(a) => self.dbg.mem_cursor = a,
@@ -1310,6 +1504,14 @@ impl App {
                     .collect();
                 let r = centered(area, 52, items.len() as u16 + 2);
                 self.list_popup(f, r, " Магнитофон ", items, *sel);
+            }
+            Overlay::Cpm(sel) => {
+                let items: Vec<ListItem> = CPM_MENU
+                    .iter()
+                    .map(|(k, l)| ListItem::new(format!(" {k}  {l}")))
+                    .collect();
+                let r = centered(area, 60, items.len() as u16 + 2);
+                self.list_popup(f, r, " CP/M и ОС ЮТ-88 ", items, *sel);
             }
             Overlay::Programs(list, sel) => {
                 let items: Vec<ListItem> = list

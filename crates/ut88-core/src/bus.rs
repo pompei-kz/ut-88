@@ -14,17 +14,23 @@
 //!
 //! Модуль ОЗУ 64 Кбайт отвечает везде, где не заблокирован сигналами выборки сегментов
 //! других модулей: 0XXX (если включено ПЗУ модуля 1 или калькулятора), EXXX и FXXX (если
-//! есть дисплейный модуль). Свободные адреса читаются как FFH.
+//! есть дисплейный модуль; сегмент FXXX можно отдать ОЗУ тумблером
+//! [`Config::monitor_f_rom`]). Свободные адреса читаются как FFH.
+//!
+//! Квазидиск (doc/32): пока порт 40H открывает блок, все стековые циклы процессора
+//! ([`i8080::Bus::read_stack`] / [`i8080::Bus::write_stack`]) идут в него, а не в карту
+//! выше.
 //!
 //! Порты: A0H–AFH (чётные) — клавиатура модуля 1, нечётные — магнитофон (бит 0;
 //! дешифратор DD7 различает только старшую тетраду, магнитофон выбирается по A0 = 1);
-//! 04H–07H и F8H–FBH — ППА дисплейного модуля.
+//! 04H–07H и F8H–FBH — ППА дисплейного модуля; 40H (запись) — квазидиск.
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::devices::cpu_module::CpuModule;
 use crate::devices::display::DisplayModule;
+use crate::devices::kvazidisk::{self, Kvazidisk};
 use crate::tape::{CPU_DIV, TapePlayer, TapeRecorder};
 
 /// Вид обращения к памяти — для устройств расширения (квазидиск переключает именно
@@ -33,8 +39,8 @@ use crate::tape::{CPU_DIV, TapePlayer, TapeRecorder};
 pub enum MemAccess {
     /// Обычное обращение.
     Normal,
-    /// Обращение к стеку (PUSH, POP, CALL, RET, RST, XTHL, приём прерывания) —
-    /// определяется по коду команды и окрестности SP.
+    /// Обращение к стеку: машинный цикл с битом STACK слова состояния (PUSH, POP, CALL,
+    /// RET, RST, XTHL, приём прерывания).
     Stack,
 }
 
@@ -88,6 +94,8 @@ pub struct BusState {
     pub player: Option<TapePlayer>,
     /// Идущая запись выхода магнитофона.
     pub recorder: Option<TapeRecorder>,
+    /// Квазидиск.
+    pub kvazidisk: Option<Kvazidisk>,
     /// Такт 16 МГц начала текущей команды.
     pub now: u64,
 }
@@ -98,8 +106,6 @@ pub struct Bus {
     pub st: BusState,
     /// Устройства расширения.
     pub expansions: Vec<Box<dyn Expansion>>,
-    /// SP перед стековой командой (для [`MemAccess::Stack`]).
-    pub(crate) stack_window: Option<u16>,
     /// Перепады выхода магнитофона для звука: `(такт 16 МГц, уровень)`.
     pub(crate) sound_edges: Vec<(u64, bool)>,
     /// Собирать перепады для звука.
@@ -115,6 +121,7 @@ impl Bus {
         let cpu_module = CpuModule::new(&config.monitor_rom);
         let display = config.display.as_ref().map(DisplayModule::new);
         let ram64 = config.ram64.then(|| vec![0u8; 0x10000]);
+        let kvazidisk = (config.kvazidisk > 0).then(|| Kvazidisk::new(config.kvazidisk));
         Self {
             st: BusState {
                 config,
@@ -123,10 +130,10 @@ impl Bus {
                 ram64,
                 player: None,
                 recorder: None,
+                kvazidisk,
                 now: 0,
             },
             expansions: Vec::new(),
-            stack_window: None,
             sound_edges: Vec::new(),
             sound_capture: false,
         }
@@ -134,6 +141,11 @@ impl Bus {
 
     fn segment0_blocked(&self) -> bool {
         self.st.config.rom1_enabled || self.st.config.calculator_rom.is_some()
+    }
+
+    /// Сегмент F000H–FFFFH занят дисплейным модулем.
+    fn segment_f_display(&self) -> bool {
+        self.st.display.is_some() && self.st.config.monitor_f_rom
     }
 
     /// Чтение памяти без побочных эффектов и без устройств расширения.
@@ -156,7 +168,7 @@ impl Bus {
             }
             0xC if st.ram64.is_none() && addr < 0xC400 => st.cpu_module.ram[a & 0x3FF],
             0xE if st.display.is_some() => st.display.as_ref().unwrap().vram[a & 0x7FF],
-            0xF if st.display.is_some() => {
+            0xF if self.segment_f_display() => {
                 let d = st.display.as_ref().unwrap();
                 match addr {
                     0xF000..=0xF3FF => 0xFF,
@@ -171,6 +183,7 @@ impl Bus {
     /// Запись в память без устройств расширения (ПЗУ не меняется).
     pub fn poke(&mut self, addr: u16, v: u8) {
         let seg0 = self.segment0_blocked();
+        let seg_f = self.segment_f_display();
         let st = &mut self.st;
         let a = usize::from(addr);
         match addr >> 12 {
@@ -184,7 +197,7 @@ impl Bus {
             }
             0xC if st.ram64.is_none() && addr < 0xC400 => st.cpu_module.ram[a & 0x3FF] = v,
             0xE if st.display.is_some() => st.display.as_mut().unwrap().vram[a & 0x7FF] = v,
-            0xF if st.display.is_some() => {
+            0xF if seg_f => {
                 if (0xF400..=0xF7FF).contains(&addr) {
                     st.display.as_mut().unwrap().ram[a & 0x3FF] = v;
                 }
@@ -197,11 +210,22 @@ impl Bus {
         }
     }
 
-    fn access(&self, addr: u16) -> MemAccess {
-        match self.stack_window {
-            Some(sp) if addr.wrapping_sub(sp.wrapping_sub(2)) < 4 => MemAccess::Stack,
-            _ => MemAccess::Normal,
+    fn mem_read(&mut self, addr: u16, acc: MemAccess) -> u8 {
+        for e in &mut self.expansions {
+            if let Some(v) = e.mem_read(addr, acc) {
+                return v;
+            }
         }
+        self.peek(addr)
+    }
+
+    fn mem_write(&mut self, addr: u16, v: u8, acc: MemAccess) {
+        for e in &mut self.expansions {
+            if e.mem_write(addr, v, acc) {
+                return;
+            }
+        }
+        self.poke(addr, v);
     }
 
     /// Выход магнитофона: запомнить перепад.
@@ -236,27 +260,30 @@ impl Bus {
 
 impl i8080::Bus for Bus {
     fn read(&mut self, addr: u16) -> u8 {
-        if !self.expansions.is_empty() {
-            let acc = self.access(addr);
-            for e in &mut self.expansions {
-                if let Some(v) = e.mem_read(addr, acc) {
-                    return v;
-                }
-            }
-        }
-        self.peek(addr)
+        self.mem_read(addr, MemAccess::Normal)
     }
 
     fn write(&mut self, addr: u16, v: u8) {
-        if !self.expansions.is_empty() {
-            let acc = self.access(addr);
-            for e in &mut self.expansions {
-                if e.mem_write(addr, v, acc) {
-                    return;
-                }
-            }
+        self.mem_write(addr, v, MemAccess::Normal);
+    }
+
+    fn read_stack(&mut self, addr: u16) -> u8 {
+        if let Some(q) = &self.st.kvazidisk
+            && q.is_open()
+        {
+            return q.read(addr);
         }
-        self.poke(addr, v);
+        self.mem_read(addr, MemAccess::Stack)
+    }
+
+    fn write_stack(&mut self, addr: u16, v: u8) {
+        if let Some(q) = &mut self.st.kvazidisk
+            && q.is_open()
+        {
+            q.write(addr, v);
+            return;
+        }
+        self.mem_write(addr, v, MemAccess::Stack);
     }
 
     fn input(&mut self, port: u8) -> u8 {
@@ -292,6 +319,12 @@ impl i8080::Bus for Bus {
             if e.port_write(port, v) {
                 return;
             }
+        }
+        if port == kvazidisk::PORT
+            && let Some(q) = &mut self.st.kvazidisk
+        {
+            q.port = v;
+            return;
         }
         if let Some(d) = &mut self.st.display
             && d.port_write(port, v)

@@ -24,7 +24,8 @@ impl Default for DisplayRoms {
 
 /// Конфигурация машины.
 ///
-/// Готовые варианты — [`Config::minimal`] и [`Config::full`]; поля можно менять.
+/// Готовые варианты — [`Config::minimal`], [`Config::full`], [`Config::full_with_monitor0`]
+/// и [`Config::cpm`]; поля можно менять.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// Образ ПЗУ МОНИТОРА модуля 1 (до 1 Кбайта; по умолчанию `monitor-fixed.bin`).
@@ -49,6 +50,13 @@ pub struct Config {
     /// 0038H — `JMP FFC1H` (как велит doc/25 для режима часов в МОНИТОРЕ-«F»). Действует,
     /// только если ПЗУ модуля 1 выключено и есть ОЗУ в 0000H.
     pub boot_stub: bool,
+    /// Сигналы выборки сегмента F000H–FFFFH дисплейного модуля включены: ПЗУ МОНИТОРА-«F»
+    /// (F800H–FFFFH) и его ОЗУ (F400H–F7FFH) на месте. Выключение — тумблер из doc/30
+    /// («выключите ПЗУ мониторов» для ОС ЮТ-88): весь сегмент отдаётся модулю ОЗУ 64 Кбайт.
+    /// Без дисплейного модуля не действует.
+    pub monitor_f_rom: bool,
+    /// Квазидиск (doc/32): число блоков по 64 Кбайт (0 — нет, 1–4 — 64…256 Кбайт).
+    pub kvazidisk: u8,
 }
 
 impl Config {
@@ -62,6 +70,8 @@ impl Config {
             ram64: false,
             clock_interrupts: true,
             boot_stub: false,
+            monitor_f_rom: true,
+            kvazidisk: 0,
         }
     }
 
@@ -79,7 +89,28 @@ impl Config {
             ram64: true,
             clock_interrupts: true,
             boot_stub: true,
+            monitor_f_rom: true,
+            kvazidisk: 0,
         }
+    }
+
+    /// Конфигурация для CP/M и ОС ЮТ-88 (doc/30, doc/32): полная («часы в МОНИТОРЕ-«F»»:
+    /// ПЗУ модуля 1 выключено, ОЗУ во всём пространстве, кроме экрана E000H–EFFFH и
+    /// сегмента F000H–FFFFH дисплейного модуля) плюс квазидиск 256 Кбайт.
+    ///
+    /// ОС ЮТ-88 после стартера требует выключить и ПЗУ МОНИТОРА-«F» —
+    /// [`crate::Machine::set_monitor_f_rom`] (это делает [`crate::Machine::boot_ut88_os`]).
+    pub fn cpm() -> Self {
+        Self {
+            kvazidisk: 4,
+            ..Self::full()
+        }
+    }
+
+    /// Задать объём квазидиска в блоках по 64 Кбайт (0 — без квазидиска).
+    pub fn with_kvazidisk(mut self, blocks: u8) -> Self {
+        self.kvazidisk = blocks.min(4);
+        self
     }
 
     /// Полная конфигурация с включённым ПЗУ модуля 1 (первый режим из doc/25): сброс

@@ -22,3 +22,15 @@ pub const CALCULATOR: &[u8; 2048] = include_bytes!("../../../roms/calculator.bin
 pub const SEGMENTS: [u8; 16] = [
     0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71,
 ];
+
+/// ОС ЮТ-88 (`roms/ut88-os.bin`, загрузочный модуль 3000H–58AFH, пуск 3000H; doc/30).
+pub const UT88_OS: &[u8] = include_bytes!("../../../roms/ut88-os.bin");
+
+/// CP/M-64 для квазидиска (`roms/cpm64.bin`, 3100H–4FFFH, пуск 3100H; doc/31, doc/32).
+pub const CPM64: &[u8] = include_bytes!("../../../roms/cpm64.bin");
+
+/// CP/M-35 без квазидиска (`roms/cpm35.bin`, 3400H–4C55H, пуск 4A00H; doc/33).
+pub const CPM35: &[u8] = include_bytes!("../../../roms/cpm35.bin");
+
+/// Программа CH.COM для CP/M (`roms/cpm-ch-com.bin`, 0100H–03FFH; doc/33).
+pub const CPM_CH_COM: &[u8] = include_bytes!("../../../roms/cpm-ch-com.bin");

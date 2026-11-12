@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use ut88_audio::Audio;
-use ut88_core::{CPU_HZ, Config, FRAME_CYCLES, KbKey, Machine, PadKey, TapeFormat, screen};
+use ut88_core::{
+    CPU_HZ, Config, CpmDisk, FRAME_CYCLES, KbKey, Machine, PadKey, System, TapeFormat, screen,
+};
 
 use crate::debugger::{DbgAction, Debugger};
 use crate::draw::{self, Hit, Hits, Xf};
@@ -98,6 +100,10 @@ pub struct App {
     status: String,
     status_time: Instant,
     error_popup: Option<String>,
+    /// Окно «Диск CP/M».
+    cpm_open: bool,
+    /// Файл образа квазидиска (сохраняется при выходе).
+    kvazidisk_file: Option<PathBuf>,
 }
 
 impl App {
@@ -144,6 +150,8 @@ impl App {
             status: String::new(),
             status_time: Instant::now(),
             error_popup: None,
+            cpm_open: false,
+            kvazidisk_file: opts.kvazidisk_file,
         };
         if let Some(e) = app.audio.error()
             && opts.sound
@@ -385,7 +393,7 @@ impl App {
         match key {
             egui::Key::F2 => self.press(Hit::Pad(PadKey::Reset), false),
             egui::Key::F3 => {
-                let c = self.m.config().clone();
+                let c = self.m.cold_start_config();
                 self.cold_start(c);
             }
             egui::Key::F4 => self.toggle_pause(),
@@ -711,7 +719,7 @@ impl App {
                     ui.close();
                 }
                 if ui.button("Холодный старт — выкл./вкл. питания (F3)").clicked() {
-                    let c = self.m.config().clone();
+                    let c = self.m.cold_start_config();
                     self.cold_start(c);
                     ui.close();
                 }
@@ -734,6 +742,7 @@ impl App {
                     (0, "минимальная (модуль 1)", Config::minimal as fn() -> Config),
                     (1, "полная (МОНИТОР-F, часы в нём)", Config::full),
                     (2, "полная + МОНИТОР модуля 1", Config::full_with_monitor0),
+                    (3, "CP/M и ОС ЮТ-88 (полная + квазидиск 256К)", Config::cpm),
                 ] {
                     if ui.radio(cur == kind, label).clicked() {
                         self.switch_config(mk());
@@ -749,6 +758,17 @@ impl App {
                     self.m.set_clock_interrupts(irq);
                 }
                 if self.has_display() {
+                    let mut rom = self.m.config().monitor_f_rom;
+                    if ui
+                        .checkbox(&mut rom, "ПЗУ МОНИТОРА-F (сегмент F000H–FFFFH)")
+                        .on_hover_text(
+                            "тумблер из doc/30: выключенное ПЗУ отдаёт F000H–FFFFH модулю ОЗУ — \
+                             так работает ОС ЮТ-88",
+                        )
+                        .changed()
+                    {
+                        self.m.set_monitor_f_rom(rom);
+                    }
                     ui.checkbox(&mut self.pc_to_pad, "Клавиатура ПК → кнопки модуля 1");
                 }
             });
@@ -845,6 +865,7 @@ impl App {
                     }
                 }
             });
+            ui.menu_button("CP/M", |ui| self.cpm_menu(ui));
             ui.menu_button("Программы", |ui| {
                 if ui.button("Окно «Программы из журналов» (F9)").clicked() {
                     self.programs_open = true;
@@ -965,10 +986,11 @@ impl App {
 
     fn config_kind(&self) -> u8 {
         let c = self.m.config();
-        match (c.display.is_some(), c.rom1_enabled) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => 2,
+        match (c.display.is_some(), c.rom1_enabled, c.kvazidisk > 0) {
+            (false, _, _) => 0,
+            (true, false, false) => 1,
+            (true, true, _) => 2,
+            (true, false, true) => 3,
         }
     }
 
@@ -976,7 +998,209 @@ impl App {
         match self.config_kind() {
             0 => "минимальная",
             1 => "полная",
-            _ => "полная + МОНИТОР-0",
+            2 => "полная + МОНИТОР-0",
+            _ => "CP/M (квазидиск)",
+        }
+    }
+
+    // ----- CP/M и ОС ЮТ-88 -----
+
+    fn cpm_menu(&mut self, ui: &mut egui::Ui) {
+        for (sys, keep, label) in [
+            (
+                System::Cpm64,
+                true,
+                "Загрузить CP/M-64 (файлы на квазидиске сохраняются)",
+            ),
+            (
+                System::Cpm64,
+                false,
+                "Загрузить CP/M-64 с чистым квазидиском",
+            ),
+            (
+                System::Cpm35,
+                true,
+                "Загрузить CP/M-35 (диск в ОЗУ 5000H–DBFFH)",
+            ),
+            (System::Ut88Os, true, "Загрузить ОС ЮТ-88"),
+        ] {
+            if ui.button(label).clicked() {
+                ui.close();
+                self.boot(sys, keep);
+            }
+        }
+        ui.separator();
+        if ui.button("Диск CP/M: файлы…").clicked() {
+            ui.close();
+            self.cpm_open = true;
+        }
+        if ui.button("Записать файл на диск CP/M…").clicked() {
+            ui.close();
+            self.cpm_put_dialog();
+        }
+        ui.separator();
+        let has_kd = self.m.has_kvazidisk();
+        if ui
+            .add_enabled(has_kd, egui::Button::new("Сохранить образ квазидиска…"))
+            .clicked()
+        {
+            ui.close();
+            let def = self.kvazidisk_name();
+            if let Some(p) = pick_save("Образ квазидиска", &["img"], &def) {
+                self.save_kvazidisk(&p);
+            }
+        }
+        if ui
+            .add_enabled(has_kd, egui::Button::new("Загрузить образ квазидиска…"))
+            .clicked()
+        {
+            ui.close();
+            if let Some(p) = pick_open("Образ квазидиска", &["img"]) {
+                match self.m.load_kvazidisk_file(&p) {
+                    Ok(()) => {
+                        self.kvazidisk_file = Some(p.clone());
+                        self.say(format!(
+                            "Образ квазидиска загружен: {} — запустите CP/M-64 с сохранением файлов",
+                            p.display()
+                        ));
+                    }
+                    Err(e) => self.fail(format!("Образ не загружен: {e}")),
+                }
+            }
+        }
+    }
+
+    fn kvazidisk_name(&self) -> String {
+        self.kvazidisk_file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "kvazidisk.img".into())
+    }
+
+    fn save_kvazidisk(&mut self, p: &Path) {
+        match self.m.save_kvazidisk_file(p) {
+            Ok(()) => {
+                self.kvazidisk_file = Some(p.to_path_buf());
+                self.say(format!("Образ квазидиска сохранён: {}", p.display()));
+            }
+            Err(e) => self.fail(format!("Образ не сохранён: {e}")),
+        }
+    }
+
+    /// Загрузить систему; при неподходящей конфигурации — холодный старт в «CP/M».
+    fn boot(&mut self, sys: System, keep: bool) {
+        if let Some(c) = sys.config_for(self.m.config()) {
+            self.cold_start(c);
+        }
+        self.m.release_all_keys();
+        self.holds.clear();
+        match self.m.boot_system(sys, keep) {
+            Ok(msg) => {
+                self.resume();
+                self.say(msg);
+            }
+            Err(e) => self.fail(format!("{} не загружена: {e}", sys.title())),
+        }
+    }
+
+    fn cpm_put_dialog(&mut self) {
+        let Some(p) = rfd::FileDialog::new()
+            .add_filter(
+                "Файлы CP/M",
+                &["com", "COM", "txt", "TXT", "asm", "ASM", "bas", "BAS"],
+            )
+            .add_filter("Все файлы", &["*"])
+            .set_directory(std::env::current_dir().unwrap_or_default())
+            .pick_file()
+        else {
+            return;
+        };
+        match self.m.cpm_put_file(&p, None) {
+            Ok(msg) => self.say(msg),
+            Err(e) => self.fail(format!("Файл не записан: {e}")),
+        }
+    }
+
+    fn cpm_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.cpm_open;
+        let disk = self.m.cpm_default_disk();
+        let list = self.m.cpm_list(disk);
+        let mut extract: Option<String> = None;
+        let mut delete: Option<String> = None;
+        let mut put = false;
+        egui::Window::new("Диск CP/M")
+            .open(&mut open)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.label(match (disk, self.m.cpm_running()) {
+                    (CpmDisk::Kvazidisk, Some(_)) => "Квазидиск работающей CP/M-64",
+                    (CpmDisk::Kvazidisk, None) => "Квазидиск (CP/M-64 не запущена)",
+                    (CpmDisk::Ram35, Some(_)) => "Диск работающей CP/M-35 (ОЗУ 5000H–DBFFH)",
+                    (CpmDisk::Ram35, None) => "Диск CP/M-35 в ОЗУ (CP/M не запущена)",
+                });
+                match &list {
+                    Ok(files) if files.is_empty() => {
+                        ui.label("Файлов нет.");
+                    }
+                    Ok(files) => {
+                        egui::Grid::new("cpm-files").striped(true).show(ui, |ui| {
+                            for f in files {
+                                ui.monospace(format!("{:<12}", f.name));
+                                ui.monospace(format!("{:>6} байт", f.bytes()));
+                                if ui.small_button("Сохранить на ПК…").clicked() {
+                                    extract = Some(f.name.clone());
+                                }
+                                if ui.small_button("Удалить").clicked() {
+                                    delete = Some(f.name.clone());
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        ui.label(format!("Нет диска: {e}"));
+                    }
+                }
+                ui.separator();
+                if ui.button("Записать файл с ПК…").clicked() {
+                    put = true;
+                }
+                ui.label(
+                    "Файл записывается под своим именем (8.3, заглавными буквами); \
+                     работающая CP/M после этого перезапускается, чтобы перечитать каталог.",
+                );
+            });
+        self.cpm_open = open;
+        if put {
+            self.cpm_put_dialog();
+        }
+        if let Some(name) = extract
+            && let Some(p) = pick_save("Все файлы", &["*"], &name)
+        {
+            match self.m.cpm_read_file(disk, &name) {
+                Ok(data) => match std::fs::write(&p, data) {
+                    Ok(()) => self.say(format!("{name} сохранён в {}", p.display())),
+                    Err(e) => self.fail(format!("{}: {e}", p.display())),
+                },
+                Err(e) => self.fail(e),
+            }
+        }
+        if let Some(name) = delete {
+            match self.m.cpm_delete_file(disk, &name) {
+                Ok(_) => {
+                    let restarted = self.m.cpm_warm_boot();
+                    self.say(format!(
+                        "{name} удалён{}",
+                        if restarted {
+                            "; CP/M перезапущена"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                Err(e) => self.fail(e),
+            }
         }
     }
 
@@ -1351,6 +1575,9 @@ impl eframe::App for App {
         if self.programs_open {
             self.programs_window(ctx);
         }
+        if self.cpm_open {
+            self.cpm_window(ctx);
+        }
         if self.about_open {
             egui::Window::new("О программе")
                 .open(&mut self.about_open)
@@ -1380,5 +1607,16 @@ impl eframe::App for App {
         }
         // Окно перерисовывается непрерывно — от этого зависит ход эмуляции.
         ctx.request_repaint();
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(p) = self.kvazidisk_file.clone()
+            && self.m.has_kvazidisk()
+        {
+            match self.m.save_kvazidisk_file(&p) {
+                Ok(()) => eprintln!("ut88: образ квазидиска сохранён в {}", p.display()),
+                Err(e) => eprintln!("ut88: образ квазидиска не сохранён: {e}"),
+            }
+        }
     }
 }

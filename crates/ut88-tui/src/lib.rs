@@ -7,7 +7,9 @@
 //!   дублирует их буквами; нижняя строка — панель кнопок этих клавиш в стиле Midnight
 //!   Commander, щелчок мышью по кнопке равен нажатию (меню и справка доступны и тогда,
 //!   когда терминал забирает F11 себе);
-//! - отладчик (F12) — отдельный экран.
+//! - отладчик (F12) — отдельный экран;
+//! - меню CP/M (пункт `c` меню F11): загрузка CP/M-64, CP/M-35, ОС ЮТ-88, файлы на диске
+//!   CP/M, образ квазидиска.
 //!
 //! Вход — [`run`].
 
@@ -45,6 +47,8 @@ pub struct Options {
     pub cold_start: Option<Box<dyn Fn() -> Machine>>,
     /// Файл быстрого снимка (F6/F7).
     pub quick_snapshot: PathBuf,
+    /// Файл образа квазидиска: сохраняется при выходе (и по пункту меню CP/M).
+    pub kvazidisk_file: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -55,6 +59,7 @@ impl Default for Options {
             programs_dir: None,
             cold_start: None,
             quick_snapshot: PathBuf::from(QUICK_SNAPSHOT),
+            kvazidisk_file: None,
         }
     }
 }
@@ -171,6 +176,15 @@ pub fn run(machine: Machine, opts: Options) -> anyhow::Result<()> {
             }
         }
         app.update_meter();
+    }
+    drop(_guard);
+    if let Some(p) = &app.opts.kvazidisk_file
+        && app.m.has_kvazidisk()
+    {
+        match app.m.save_kvazidisk_file(p) {
+            Ok(()) => eprintln!("ut88: образ квазидиска сохранён в {}", p.display()),
+            Err(e) => eprintln!("ut88: образ квазидиска не сохранён: {e}"),
+        }
     }
     Ok(())
 }

@@ -109,7 +109,7 @@ pub struct Snapshot {
     pub expansions: Vec<(String, Vec<u8>)>,
 }
 
-const SNAPSHOT_VERSION: u32 = 2;
+const SNAPSHOT_VERSION: u32 = 3;
 const SNAPSHOT_MAGIC: &[u8; 8] = b"UT88SNAP";
 
 /// Ошибка снимка.
@@ -192,6 +192,13 @@ impl Machine {
         }
     }
 
+    /// Тумблер «ПЗУ МОНИТОРА-«F»» (doc/30): выключение отдаёт сегмент F000H–FFFFH
+    /// (ПЗУ F800H–FFFFH и ОЗУ F400H–F7FFH дисплейного модуля) модулю ОЗУ 64 Кбайт — так
+    /// работает ОС ЮТ-88.
+    pub fn set_monitor_f_rom(&mut self, on: bool) {
+        self.bus.st.config.monitor_f_rom = on;
+    }
+
     /// Подключить устройство расширения (например, квазидиск).
     pub fn add_expansion(&mut self, dev: Box<dyn Expansion>) {
         self.bus.expansions.push(dev);
@@ -229,15 +236,12 @@ impl Machine {
     pub fn step(&mut self) -> u32 {
         self.bus.st.now = self.master_ticks();
         let t = if self.clock.irq_pending && self.cpu.interrupts_enabled() {
-            self.set_stack_window(true);
             let t = self.cpu.interrupt(&mut self.bus, INTA_OPCODE).unwrap_or(0);
             self.clock.irq_pending = false;
             t
         } else {
-            self.set_stack_window(false);
             self.cpu.step(&mut self.bus)
         };
-        self.bus.stack_window = None;
         // Секундный импульс К176ИЕ5 взводит триггер запроса прерывания.
         while self.master_ticks() >= self.clock.next_tick {
             self.clock.next_tick += MASTER_HZ;
@@ -246,14 +250,6 @@ impl Machine {
             }
         }
         t
-    }
-
-    fn set_stack_window(&mut self, interrupt: bool) {
-        if self.bus.expansions.is_empty() {
-            return;
-        }
-        let stack = interrupt || is_stack_opcode(self.bus.peek(self.cpu.pc));
-        self.bus.stack_window = stack.then_some(self.cpu.sp);
     }
 
     /// Выполнять команды, пока не пройдёт не меньше `n` тактов процессора. Возвращает
@@ -637,12 +633,4 @@ impl Machine {
         let s = Self::parse_snapshot(&data)?;
         self.restore(&s)
     }
-}
-
-/// Команды, обращающиеся к стеку.
-fn is_stack_opcode(op: u8) -> bool {
-    matches!(op & 0xC7, 0xC0 | 0xC4 | 0xC7) // Rcc, Ccc, RST
-        || matches!(op & 0xCF, 0xC1 | 0xC5 | 0xCD) // POP, PUSH, CALL/*CALL
-        || matches!(op, 0xC9 | 0xD9) // RET/*RET
-        || op == 0xE3 // XTHL
 }

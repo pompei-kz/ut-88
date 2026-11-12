@@ -591,3 +591,96 @@ fn disasm_lengths_match_execution() {
         assert_eq!(disasm(&[op, 0, 0], 0).1, instruction_len(op));
     }
 }
+
+// ---------------------------------------------------------------- стековые циклы
+
+/// Шина, раздельно считающая обычные и стековые обращения (бит STACK слова состояния).
+struct StackBus {
+    ram: RamBus,
+    /// Журнал: (стековое, запись, адрес).
+    log: Vec<(bool, bool, u16)>,
+}
+
+impl i8080::Bus for StackBus {
+    fn read(&mut self, addr: u16) -> u8 {
+        self.log.push((false, false, addr));
+        self.ram.mem[usize::from(addr)]
+    }
+    fn write(&mut self, addr: u16, v: u8) {
+        self.log.push((false, true, addr));
+        self.ram.mem[usize::from(addr)] = v;
+    }
+    fn read_stack(&mut self, addr: u16) -> u8 {
+        self.log.push((true, false, addr));
+        self.ram.mem[usize::from(addr)]
+    }
+    fn write_stack(&mut self, addr: u16, v: u8) {
+        self.log.push((true, true, addr));
+        self.ram.mem[usize::from(addr)] = v;
+    }
+    fn input(&mut self, _port: u8) -> u8 {
+        0
+    }
+    fn output(&mut self, _port: u8, _v: u8) {}
+}
+
+/// Стековые обращения команды `code` при SP = 8000H: список (запись, адрес).
+fn stack_cycles(code: &[u8], interrupt: bool) -> (Vec<(bool, u16)>, usize) {
+    let (mut cpu, ram) = setup(code);
+    let mut bus = StackBus {
+        ram,
+        log: Vec::new(),
+    };
+    if interrupt {
+        cpu.inte = true;
+        cpu.interrupt(&mut bus, 0xFF).unwrap();
+    } else {
+        cpu.step(&mut bus);
+    }
+    let stack: Vec<(bool, u16)> = bus.log.iter().filter(|e| e.0).map(|e| (e.1, e.2)).collect();
+    let normal = bus.log.iter().filter(|e| !e.0).count();
+    (stack, normal)
+}
+
+#[test]
+fn stack_cycles_are_marked() {
+    let w = |a| (true, a);
+    let r = |a| (false, a);
+    // PUSH B: две записи, обычные — только выборка кода.
+    assert_eq!(
+        stack_cycles(&[0xC5], false),
+        (vec![w(0x7FFF), w(0x7FFE)], 1)
+    );
+    // POP B.
+    assert_eq!(
+        stack_cycles(&[0xC1], false),
+        (vec![r(0x8000), r(0x8001)], 1)
+    );
+    // CALL 1234H: выборка 3 байт обычная.
+    assert_eq!(
+        stack_cycles(&[0xCD, 0x34, 0x12], false),
+        (vec![w(0x7FFF), w(0x7FFE)], 3)
+    );
+    // CZ при Z = 0 стек не трогает.
+    assert_eq!(stack_cycles(&[0xCC, 0x34, 0x12], false), (vec![], 3));
+    // RET, RST 7.
+    assert_eq!(
+        stack_cycles(&[0xC9], false),
+        (vec![r(0x8000), r(0x8001)], 1)
+    );
+    assert_eq!(
+        stack_cycles(&[0xFF], false),
+        (vec![w(0x7FFF), w(0x7FFE)], 1)
+    );
+    // XTHL: чтение SP, SP+1, запись SP+1, SP.
+    assert_eq!(
+        stack_cycles(&[0xE3], false),
+        (vec![r(0x8000), r(0x8001), w(0x8001), w(0x8000)], 1)
+    );
+    // Приём прерывания RST 7: код по INTA не читается из памяти.
+    assert_eq!(stack_cycles(&[], true), (vec![w(0x7FFF), w(0x7FFE)], 0));
+    // MOV M,A / SHLD / SPHL — не стековые.
+    assert_eq!(stack_cycles(&[0x77], false).0, vec![]);
+    assert_eq!(stack_cycles(&[0x22, 0x00, 0x90], false).0, vec![]);
+    assert_eq!(stack_cycles(&[0xF9], false).0, vec![]);
+}

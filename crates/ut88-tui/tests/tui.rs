@@ -447,3 +447,47 @@ fn keybar_mouse_clicks() {
     click_hotkey(&mut app, Hotkey::Exit);
     assert!(app.quit);
 }
+
+#[test]
+fn cpm_menu_boots_and_puts_files() {
+    let mut app = App::new(Machine::new(Config::minimal()), Options::default());
+    app.on_key(key(KeyCode::F(11)));
+    app.on_key(key(KeyCode::Char('c')));
+    assert!(matches!(app.overlay, Some(Overlay::Cpm(_))));
+    let text = render(&app, 80, 32);
+    assert!(text.contains("загрузить CP/M-64"), "{text}");
+    // CP/M-64 из минимальной конфигурации: холодный старт в «CP/M (квазидиск)».
+    app.on_key(key(KeyCode::Char('6')));
+    assert!(app.overlay.is_none());
+    assert!(app.m.has_kvazidisk());
+    assert_eq!(app.m.cpu.pc, 0xDA00);
+    let text = render(&app, 80, 32);
+    assert!(text.contains("CP/M-64 загружена"), "{text}");
+    // Записать файл на диск через строку ввода.
+    let dir = std::env::temp_dir().join(format!("ut88-tui-cpm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("hello.txt");
+    std::fs::write(&f, b"HI\r\n").unwrap();
+    app.on_key(key(KeyCode::F(11)));
+    app.on_key(key(KeyCode::Char('c')));
+    app.on_key(key(KeyCode::Char('w')));
+    for c in f.display().to_string().chars() {
+        app.on_key(key(KeyCode::Char(c)));
+    }
+    app.on_key(key(KeyCode::Enter));
+    let files = app.m.cpm_list(ut88_core::CpmDisk::Kvazidisk).unwrap();
+    assert_eq!(files[0].name, "HELLO.TXT");
+    // ОС ЮТ-88: ПЗУ МОНИТОРА-F выключено, тумблер — пункт «r» меню.
+    app.on_key(key(KeyCode::F(11)));
+    app.on_key(key(KeyCode::Char('c')));
+    app.on_key(key(KeyCode::Char('o')));
+    assert!(!app.m.config().monitor_f_rom);
+    app.on_key(key(KeyCode::F(11)));
+    app.on_key(key(KeyCode::Char('r')));
+    assert!(app.m.config().monitor_f_rom);
+    // Холодный старт возвращает тумблер.
+    app.m.set_monitor_f_rom(false);
+    app.on_key(key(KeyCode::F(3)));
+    assert!(app.m.config().monitor_f_rom);
+    assert!(app.m.has_kvazidisk());
+}
