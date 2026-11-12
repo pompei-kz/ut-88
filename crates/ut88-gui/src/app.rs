@@ -1412,6 +1412,11 @@ impl App {
                 let addr = parse_hex_u16(&t.gen_addr)?;
                 let data = std::fs::read(t.gen_bin.trim())?;
                 anyhow::ensure!(!data.is_empty(), "пустой файл");
+                anyhow::ensure!(
+                    data.len() <= 0x10000,
+                    "файл больше 64 Кбайт ({} байт)",
+                    data.len()
+                );
                 anyhow::ensure!(!t.gen_wav.trim().is_empty(), "не задан файл .wav");
                 let fmt = if t.gen_format_f {
                     TapeFormat::MonitorF
@@ -1425,7 +1430,7 @@ impl App {
                     "WAV создан: {} ({:.1} с), блок {addr:04X}–{:04X}",
                     t.gen_wav,
                     sig.duration(),
-                    addr.wrapping_add(data.len() as u16 - 1)
+                    addr.wrapping_add((data.len() - 1) as u16)
                 ))
             }
             5 => {
