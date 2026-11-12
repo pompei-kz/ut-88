@@ -9,6 +9,7 @@
 
 pub mod app;
 pub mod debugger;
+pub mod dialogs;
 pub mod draw;
 pub mod keymap;
 pub mod loader;

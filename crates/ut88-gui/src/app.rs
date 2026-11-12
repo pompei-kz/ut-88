@@ -11,6 +11,7 @@ use ut88_core::{
 };
 
 use crate::debugger::{DbgAction, Debugger};
+use crate::dialogs::{FileDialogs, RfdDialogs};
 use crate::draw::{self, Hit, Hits, Xf};
 use crate::keymap;
 use crate::loader::{self, ProgramInfo, parse_hex_u16};
@@ -104,6 +105,12 @@ pub struct App {
     cpm_open: bool,
     /// Файл образа квазидиска (сохраняется при выходе).
     kvazidisk_file: Option<PathBuf>,
+    /// Файловые диалоги (в тестах — подставные).
+    dialogs: Box<dyn FileDialogs>,
+    /// Файл быстрого снимка (F6/F7).
+    quick_snapshot: PathBuf,
+    /// Как открыть звук, когда его включают в меню «Вид» (в тестах — без звуковой карты).
+    open_audio: fn() -> Audio,
 }
 
 impl App {
@@ -152,6 +159,9 @@ impl App {
             error_popup: None,
             cpm_open: false,
             kvazidisk_file: opts.kvazidisk_file,
+            dialogs: Box::new(RfdDialogs),
+            quick_snapshot: PathBuf::from(QUICK_SNAPSHOT),
+            open_audio: Audio::new,
         };
         if let Some(e) = app.audio.error()
             && opts.sound
@@ -160,6 +170,21 @@ impl App {
         }
         app.sync_sound_capture();
         app
+    }
+
+    /// Заменить файловые диалоги (для тестов окна).
+    pub fn set_file_dialogs(&mut self, d: Box<dyn FileDialogs>) {
+        self.dialogs = d;
+    }
+
+    /// Задать файл быстрого снимка F6/F7 (по умолчанию [`QUICK_SNAPSHOT`] в текущей папке).
+    pub fn set_quick_snapshot(&mut self, p: PathBuf) {
+        self.quick_snapshot = p;
+    }
+
+    /// Задать, как открывать звук при включении в меню (по умолчанию [`Audio::new`]).
+    pub fn set_audio_opener(&mut self, f: fn() -> Audio) {
+        self.open_audio = f;
     }
 
     fn has_display(&self) -> bool {
@@ -400,8 +425,8 @@ impl App {
             egui::Key::F5 => self.change_speed(!shift),
             // Некоторые раскладки присылают Shift+F5 как F17.
             egui::Key::F17 => self.change_speed(false),
-            egui::Key::F6 => self.save_snapshot(Path::new(QUICK_SNAPSHOT)),
-            egui::Key::F7 => self.load_snapshot(Path::new(QUICK_SNAPSHOT)),
+            egui::Key::F6 => self.save_snapshot(&self.quick_snapshot.clone()),
+            egui::Key::F7 => self.load_snapshot(&self.quick_snapshot.clone()),
             egui::Key::F8 => self.tape.open = !self.tape.open,
             egui::Key::F9 => self.programs_open = !self.programs_open,
             egui::Key::F10 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -776,7 +801,7 @@ impl App {
             ui.menu_button("Магнитофон", |ui| {
                 if ui.button("Вставить кассету (WAV)…").clicked() {
                     ui.close();
-                    if let Some(p) = pick_open("WAV", &["wav"]) {
+                    if let Some(p) = self.dialogs.pick_open("WAV", &["wav"]) {
                         match self.insert_tape(&p) {
                             Ok(msg) => self.say(msg),
                             Err(e) => self.fail(format!("WAV не читается: {e}")),
@@ -807,7 +832,7 @@ impl App {
                     if ui.button("Остановить запись и сохранить WAV…").clicked() {
                         ui.close();
                         if let Some(sig) = self.m.tape_record_stop() {
-                            match pick_save("WAV", &["wav"], "record.wav") {
+                            match self.dialogs.pick_save("WAV", &["wav"], "record.wav") {
                                 Some(p) => match sig.save_wav(&p) {
                                     Ok(()) => self.say(format!(
                                         "Записано {:.1} с в {}",
@@ -834,34 +859,34 @@ impl App {
             ui.menu_button("Файл", |ui| {
                 if ui.button("Загрузить программу (.bin/.hex/.ihx)…").clicked() {
                     ui.close();
-                    if let Some(p) = pick_open("Программы", &["bin", "hex", "ihx"]) {
+                    if let Some(p) = self.dialogs.pick_open("Программы", &["bin", "hex", "ihx"]) {
                         self.load_any_file(&p, false);
                     }
                 }
                 if ui.button("Загрузить и запустить…").clicked() {
                     ui.close();
-                    if let Some(p) = pick_open("Программы", &["bin", "hex", "ihx"]) {
+                    if let Some(p) = self.dialogs.pick_open("Программы", &["bin", "hex", "ihx"]) {
                         self.load_any_file(&p, true);
                     }
                 }
                 ui.separator();
                 if ui.button("Быстрый снимок (F6)").clicked() {
-                    self.save_snapshot(Path::new(QUICK_SNAPSHOT));
+                    self.save_snapshot(&self.quick_snapshot.clone());
                     ui.close();
                 }
                 if ui.button("Загрузить быстрый снимок (F7)").clicked() {
-                    self.load_snapshot(Path::new(QUICK_SNAPSHOT));
+                    self.load_snapshot(&self.quick_snapshot.clone());
                     ui.close();
                 }
                 if ui.button("Сохранить снимок…").clicked() {
                     ui.close();
-                    if let Some(p) = pick_save("Снимок ЮТ-88", &["snap"], "ut88.snap") {
+                    if let Some(p) = self.dialogs.pick_save("Снимок ЮТ-88", &["snap"], "ut88.snap") {
                         self.save_snapshot(&p);
                     }
                 }
                 if ui.button("Загрузить снимок…").clicked() {
                     ui.close();
-                    if let Some(p) = pick_open("Снимок ЮТ-88", &["snap"]) {
+                    if let Some(p) = self.dialogs.pick_open("Снимок ЮТ-88", &["snap"]) {
                         self.load_snapshot(&p);
                     }
                 }
@@ -879,7 +904,7 @@ impl App {
                 let mut on = self.audio.enabled() && self.audio.is_available();
                 if ui.checkbox(&mut on, "Звук").changed() {
                     if on && !self.audio.is_available() {
-                        self.audio = Audio::new();
+                        self.audio = (self.open_audio)();
                         if let Some(e) = self.audio.error() {
                             let e = e.to_string();
                             self.fail(format!("Звук недоступен: {e}"));
@@ -1047,7 +1072,8 @@ impl App {
         {
             ui.close();
             let def = self.kvazidisk_name();
-            if let Some(p) = pick_save("Образ квазидиска", &["img"], &def) {
+            if let Some(p) = self.dialogs.pick_save("Образ квазидиска", &["img"], &def)
+            {
                 self.save_kvazidisk(&p);
             }
         }
@@ -1056,7 +1082,7 @@ impl App {
             .clicked()
         {
             ui.close();
-            if let Some(p) = pick_open("Образ квазидиска", &["img"]) {
+            if let Some(p) = self.dialogs.pick_open("Образ квазидиска", &["img"]) {
                 match self.m.load_kvazidisk_file(&p) {
                     Ok(()) => {
                         self.kvazidisk_file = Some(p.clone());
@@ -1106,15 +1132,10 @@ impl App {
     }
 
     fn cpm_put_dialog(&mut self) {
-        let Some(p) = rfd::FileDialog::new()
-            .add_filter(
-                "Файлы CP/M",
-                &["com", "COM", "txt", "TXT", "asm", "ASM", "bas", "BAS"],
-            )
-            .add_filter("Все файлы", &["*"])
-            .set_directory(std::env::current_dir().unwrap_or_default())
-            .pick_file()
-        else {
+        let Some(p) = self.dialogs.pick_open(
+            "Файлы CP/M",
+            &["com", "COM", "txt", "TXT", "asm", "ASM", "bas", "BAS"],
+        ) else {
             return;
         };
         match self.m.cpm_put_file(&p, None) {
@@ -1177,7 +1198,7 @@ impl App {
             self.cpm_put_dialog();
         }
         if let Some(name) = extract
-            && let Some(p) = pick_save("Все файлы", &["*"], &name)
+            && let Some(p) = self.dialogs.pick_save("Все файлы", &["*"], &name)
         {
             match self.m.cpm_read_file(disk, &name) {
                 Ok(data) => match std::fs::write(&p, data) {
@@ -1330,8 +1351,9 @@ impl App {
                 );
                 ui.separator();
                 let t = &mut self.tape;
+                let d = &mut *self.dialogs;
                 ui.heading("Быстрая загрузка .bin");
-                path_row(ui, &mut t.load_path, true, "bin");
+                path_row(ui, d, &mut t.load_path, true, "bin");
                 ui.horizontal(|ui| {
                     ui.label("адрес:");
                     ui.add(egui::TextEdit::singleline(&mut t.load_addr).desired_width(60.0));
@@ -1344,7 +1366,7 @@ impl App {
                 });
                 ui.separator();
                 ui.heading("Сохранить диапазон памяти в .bin");
-                path_row(ui, &mut t.save_path, false, "bin");
+                path_row(ui, d, &mut t.save_path, false, "bin");
                 ui.horizontal(|ui| {
                     ui.label("с");
                     ui.add(egui::TextEdit::singleline(&mut t.save_start).desired_width(60.0));
@@ -1357,9 +1379,9 @@ impl App {
                 ui.separator();
                 ui.heading("WAV из .bin (запись для директив A / I)");
                 ui.label("файл .bin:");
-                path_row(ui, &mut t.gen_bin, true, "bin");
+                path_row(ui, d, &mut t.gen_bin, true, "bin");
                 ui.label("файл .wav:");
-                path_row(ui, &mut t.gen_wav, false, "wav");
+                path_row(ui, d, &mut t.gen_wav, false, "wav");
                 ui.horizontal(|ui| {
                     ui.label("адрес начала:");
                     ui.add(egui::TextEdit::singleline(&mut t.gen_addr).desired_width(60.0));
@@ -1518,7 +1540,13 @@ impl draw::Pressed for PressedView<'_> {
     }
 }
 
-fn path_row(ui: &mut egui::Ui, path: &mut String, open: bool, ext: &str) {
+fn path_row(
+    ui: &mut egui::Ui,
+    dialogs: &mut dyn FileDialogs,
+    path: &mut String,
+    open: bool,
+    ext: &str,
+) {
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(path)
@@ -1527,31 +1555,15 @@ fn path_row(ui: &mut egui::Ui, path: &mut String, open: bool, ext: &str) {
         );
         if ui.button("Обзор…").clicked() {
             let p = if open {
-                pick_open(ext, &[ext])
+                dialogs.pick_open(ext, &[ext])
             } else {
-                pick_save(ext, &[ext], &format!("ut88.{ext}"))
+                dialogs.pick_save(ext, &[ext], &format!("ut88.{ext}"))
             };
             if let Some(p) = p {
                 *path = p.display().to_string();
             }
         }
     });
-}
-
-fn pick_open(name: &str, exts: &[&str]) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter(name, exts)
-        .add_filter("Все файлы", &["*"])
-        .set_directory(std::env::current_dir().unwrap_or_default())
-        .pick_file()
-}
-
-fn pick_save(name: &str, exts: &[&str], default: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter(name, exts)
-        .set_file_name(default)
-        .set_directory(std::env::current_dir().unwrap_or_default())
-        .save_file()
 }
 
 impl eframe::App for App {
@@ -1626,3 +1638,6 @@ impl eframe::App for App {
         }
     }
 }
+
+#[cfg(test)]
+mod gui_tests;
