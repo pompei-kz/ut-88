@@ -282,3 +282,100 @@ fn expansion_sees_stack_accesses() {
     assert_eq!(m.cpu.a, 0x42);
     assert_eq!(m.save_bin(0x7FFE, 0x7FFF), vec![0x34, 0x12]);
 }
+
+// ----- часы и директива B в режиме «часы в МОНИТОРЕ-«F»» -----
+
+/// Время МОНИТОРА-«F»: секунды, минуты, часы (F6FDH–F6FFH).
+fn clock_f(m: &Machine) -> [u8; 3] {
+    let v = m.save_bin(0xF6FD, 0xF6FF);
+    [v[0], v[1], v[2]]
+}
+
+/// Директива B вызывает подпрограммы МОНИТОРА-«0» `RST 5` и `RST 3` (0028H, 0018H). В
+/// конфигурации `full` ПЗУ модуля 1 выключено, там ОЗУ с нулями: процессор «проезжает»
+/// по `NOP` до заглушки 0038H `JMP FFC1H` и дважды выполняет обработчик часов. Итог:
+/// время F6FDH +2 с на индикаторах, прерывания разрешены (`EI` в конце обработчика) —
+/// часы пошли. Время МОНИТОРА-«0» (C3FDH) не показывается.
+#[test]
+fn directive_b_in_full_runs_clock_handler() {
+    let mut m = boot();
+    kb_type(&mut m, "MF6FD\r00\r30\r12\r.");
+    assert!(!m.cpu.inte);
+    m.poke(0xC3FD, 0x11);
+    m.poke(0xC3FE, 0x22);
+    m.poke(0xC3FF, 0x33);
+    kb_type(&mut m, "B\r");
+    assert_eq!(&clock_f(&m)[1..], &[0x30, 0x12]);
+    let s = clock_f(&m)[0];
+    assert!((0x02..=0x04).contains(&s), "секунды {s:02X}");
+    assert!(m.cpu.inte, "часы пошли");
+    assert_eq!(m.indicator_bytes(), clock_f(&m));
+    m.run_seconds(3.0);
+    assert!(clock_f(&m)[0] >= s + 2);
+    // На экране — только эхо директивы и новое приглашение.
+    let t = screen_text(&m);
+    let tail: Vec<_> = t.lines().skip_while(|l| *l != " =>B").collect();
+    assert_eq!(tail.first(), Some(&" =>B"), "{t}");
+    assert_eq!(tail.get(1), Some(&" =>"), "{t}");
+}
+
+/// Положить в 2000H программу `<op>; EI; JMP 2002H` и дать ей поработать: прерывание
+/// часов всегда приходит при флаге CY, заданном `op` (STC — 1, ORA A — 0).
+fn clock_with_carry(stc: bool, start: [u8; 3]) -> Machine {
+    let mut m = boot();
+    m.load_bin(0xF6FD, &start);
+    m.load_bin(
+        0x2000,
+        &[if stc { 0x37 } else { 0xB7 }, 0xFB, 0xC3, 0x02, 0x20],
+    );
+    m.jump(0x2000);
+    m
+}
+
+/// Ошибка ПЗУ (и МОНИТОРА-«F» FFCFH, и МОНИТОРА-«0» 00CFH): секунды считаются
+/// `INR A; DAA`. `INR` не меняет CY, а `DAA` при CY = 1 прибавляет 60H, поэтому, если
+/// прерывание пришло при CY = 1, время портится: 27 → 88, а от 59 перенос в минуты не
+/// происходит. Так работает и настоящий КР580ВМ80А (процессор эмулятора проходит
+/// 8080EXM, где `DAA` проверяется со всеми флагами).
+#[test]
+fn clock_handler_daa_carry_bug() {
+    let mut m = clock_with_carry(true, [0x27, 0x30, 0x12]);
+    m.run_seconds(1.0);
+    assert_eq!(clock_f(&m), [0x88, 0x30, 0x12]);
+    let mut m = clock_with_carry(false, [0x27, 0x30, 0x12]);
+    m.run_seconds(1.0);
+    assert_eq!(clock_f(&m), [0x28, 0x30, 0x12]);
+    let mut m = clock_with_carry(false, [0x59, 0x59, 0x12]);
+    m.run_seconds(1.0);
+    assert_eq!(clock_f(&m), [0x00, 0x00, 0x13]);
+}
+
+/// Обход ошибки в ОЗУ (manual.md): по вектору 0038H вместо `JMP FFC1H` положить
+/// `PUSH PSW; ORA A; CALL FFC1H; POP PSW; RET` — обработчик получает CY = 0, а флаги
+/// прерванной программы сохраняются.
+#[test]
+fn clock_shim_clears_carry() {
+    const SHIM: [u8; 7] = [0xF5, 0xB7, 0xCD, 0xC1, 0xFF, 0xF1, 0xC9];
+    let mut m = clock_with_carry(true, [0x58, 0x59, 0x23]);
+    m.load_bin(0x0038, &SHIM);
+    m.run_seconds(1.0);
+    assert_eq!(clock_f(&m), [0x59, 0x59, 0x23]);
+    m.run_seconds(1.0);
+    assert_eq!(clock_f(&m), [0x00, 0x00, 0x00]);
+    assert_eq!(m.indicator_bytes(), [0x00, 0x00, 0x00]);
+    // Программа продолжает работать с прежними флагами (CY = 1 после STC).
+    assert!((0x2002..=0x2004).contains(&m.cpu.pc));
+    assert!(m.cpu.flag_c);
+
+    // Набор заглушки директивой M и пуск часов директивой B.
+    let mut m = boot();
+    kb_type(&mut m, "M38\rF5\rB7\rCD\rC1\rFF\rF1\rC9\r.");
+    assert_eq!(m.save_bin(0x38, 0x3E), SHIM);
+    kb_type(&mut m, "MF6FD\r58\r59\r23\r.");
+    kb_type(&mut m, "B\r");
+    m.run_seconds(120.0);
+    let [s, mi, h] = clock_f(&m);
+    assert_eq!(h, 0x00);
+    assert_eq!(mi, 0x02);
+    assert!(s <= 0x59 && s & 0x0F <= 9, "{s:02X}");
+}
