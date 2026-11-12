@@ -78,7 +78,7 @@ Memory map and ports: [doc/02-arhitektura.md](../doc/02-arhitektura.md),
 
 ### Requirements
 
-- Rust with `cargo` (edition 2024 — Rust 1.85 or newer), for example via
+- Rust with `cargo` (Rust 1.89 or newer: edition 2024, let-chains and dependencies), for example via
   [rustup](https://rustup.rs/);
 - on Linux, for the window and sound — the usual X11/Wayland and ALSA libraries (for
   building — the ALSA development package, `libasound2-dev` on Debian/Ubuntu); file dialogs

@@ -67,7 +67,7 @@ English version: [docs/MANUAL.md](docs/MANUAL.md)
 
 ### Что нужно
 
-- Rust с `cargo` (редакция 2024 — Rust 1.85 или новее), например через
+- Rust с `cargo` (Rust 1.89 или новее: редакция 2024, let-chains и зависимости), например через
   [rustup](https://rustup.rs/);
 - в Linux для окна и звука — обычные библиотеки X11/Wayland и ALSA (для сборки —
   пакет разработчика ALSA, в Debian/Ubuntu `libasound2-dev`); для файловых диалогов
