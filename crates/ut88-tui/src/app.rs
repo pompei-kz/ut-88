@@ -1,10 +1,13 @@
 //! Состояние терминального интерфейса: машина, режимы, обработка клавиш, отрисовка.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -70,6 +73,7 @@ pub enum MenuAction {
     ToggleClock,
     SaveSnapshotAs,
     LoadSnapshotFrom,
+    Help,
 }
 
 /// Пункты главного меню: буква, подпись, действие.
@@ -136,6 +140,7 @@ pub const MENU: &[(char, &str, MenuAction)] = &[
         MenuAction::ToggleView,
     ),
     ('i', "прерывания часов вкл/выкл", MenuAction::ToggleClock),
+    ('?', "справка: все клавиши", MenuAction::Help),
     (
         'q',
         "выход                                [F10]",
@@ -159,6 +164,8 @@ pub const TAPE_MENU: &[(char, &str)] = &[
 #[derive(Debug, Clone)]
 pub enum Overlay {
     Menu(usize),
+    /// Справка: горячие клавиши и клавиши ввода.
+    Help,
     Tape(usize),
     Programs(Vec<Program>, usize),
     Prompt(Prompt),
@@ -197,6 +204,9 @@ pub struct App {
     /// Измеренная скорость.
     pub actual_speed: f64,
     meter: (Instant, u64),
+    /// Где нарисованы кнопки панели горячих клавиш (для щелчков мышью; заполняется при
+    /// отрисовке).
+    keybar: RefCell<Vec<(Rect, Hotkey)>>,
 }
 
 /// Разобрать шестнадцатеричное число (допускается суффикс H).
@@ -260,6 +270,7 @@ impl App {
             resume: false,
             actual_speed: 0.0,
             meter: (Instant::now(), c),
+            keybar: RefCell::new(Vec::new()),
         }
     }
 
@@ -345,6 +356,40 @@ impl App {
             View::Debugger => self.debugger_key(ev),
             View::Machine => self.machine_key(ev),
         }
+    }
+
+    /// Обработать событие мыши: щелчок левой кнопкой по кнопке панели горячих клавиш
+    /// (нижняя строка, как в Midnight Commander) — то же, что нажатие клавиши. Открытое
+    /// окно при этом закрывается; щелчок по «11» при открытом меню или справке только
+    /// закрывает их. Координаты кнопок — из последней отрисовки.
+    pub fn on_mouse(&mut self, ev: MouseEvent) {
+        if ev.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        let Some(hk) = self.keybar_at(ev.column, ev.row) else {
+            return;
+        };
+        if let Some(ov) = self.overlay.take()
+            && hk == Hotkey::Menu
+            && matches!(ov, Overlay::Menu(_) | Overlay::Help)
+        {
+            return;
+        }
+        self.hotkey(hk);
+    }
+
+    /// Какая кнопка панели горячих клавиш нарисована в позиции (столбец, строка).
+    pub fn keybar_at(&self, column: u16, row: u16) -> Option<Hotkey> {
+        self.keybar
+            .borrow()
+            .iter()
+            .find(|(r, _)| row == r.y && column >= r.x && column < r.right())
+            .map(|&(_, hk)| hk)
+    }
+
+    /// Кнопки панели горячих клавиш, как они нарисованы в последнем кадре.
+    pub fn keybar_buttons(&self) -> Vec<(Rect, Hotkey)> {
+        self.keybar.borrow().clone()
     }
 
     fn machine_key(&mut self, ev: KeyEvent) {
@@ -440,7 +485,7 @@ impl App {
         };
         match ov {
             Overlay::Menu(sel) => {
-                if ev.code == KeyCode::Esc || ev.code == KeyCode::F(1) {
+                if ev.code == KeyCode::Esc || ev.code == KeyCode::F(11) {
                     return;
                 }
                 if let Some(s) = up_down(sel, MENU.len()) {
@@ -457,6 +502,8 @@ impl App {
                     None => self.overlay = Some(Overlay::Menu(sel)),
                 }
             }
+            // Справку закрывает любая клавиша.
+            Overlay::Help => {}
             Overlay::Tape(sel) => {
                 if ev.code == KeyCode::Esc {
                     return;
@@ -511,6 +558,7 @@ impl App {
     fn menu_action(&mut self, a: MenuAction) {
         match a {
             MenuAction::Hot(h) => self.hotkey(h),
+            MenuAction::Help => self.overlay = Some(Overlay::Help),
             MenuAction::ToggleView => {
                 self.input.clear(&mut self.m);
                 if self.m.config().display.is_none() {
@@ -773,7 +821,7 @@ impl App {
         let cur = self.dbg.mem_cursor;
         match ev.code {
             KeyCode::Esc => self.hotkey(Hotkey::Debugger),
-            KeyCode::Char('s') | KeyCode::F(11) => {
+            KeyCode::Char('s') => {
                 if !self.dbg_running {
                     self.dbg.mark = self.m.cycles();
                     self.dbg.step(&mut self.m, &mut self.input);
@@ -830,17 +878,44 @@ impl App {
     /// Нарисовать кадр.
     pub fn draw(&self, f: &mut Frame) {
         let area = f.area();
-        let [main, status] =
-            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+        let [main, status, keybar] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
         match self.view {
             View::Machine if self.pad_view => self.draw_pad(f, main),
             View::Machine => self.draw_display(f, main),
             View::Debugger => self.draw_debugger(f, main),
         }
         f.render_widget(Paragraph::new(self.status_line()), status);
+        self.draw_keybar(f, keybar);
         if let Some(ov) = &self.overlay {
             self.draw_overlay(f, main, ov);
         }
+    }
+
+    /// Панель горячих клавиш в стиле Midnight Commander: номер клавиши обычным цветом,
+    /// подпись — на голубом фоне. Запоминает, где нарисована каждая кнопка.
+    fn draw_keybar(&self, f: &mut Frame, area: Rect) {
+        let num = Style::default().fg(Color::White).bg(Color::Black);
+        let lab = Style::default().fg(Color::Black).bg(Color::Cyan);
+        let mut spans = Vec::new();
+        let mut rects = Vec::new();
+        let mut x = area.x;
+        for &(n, label, hk) in keymap::KEYBAR {
+            let w = (n.chars().count() + label.chars().count()) as u16;
+            if x + w > area.right() {
+                break;
+            }
+            spans.push(Span::styled(n, num));
+            spans.push(Span::styled(label, lab));
+            rects.push((Rect::new(x, area.y, w, 1), hk));
+            x += w;
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+        *self.keybar.borrow_mut() = rects;
     }
 
     /// Строка состояния.
@@ -867,7 +942,7 @@ impl App {
         {
             s += &format!(" | {msg}");
         } else {
-            s += " | F1 — меню";
+            s += " | F11 — меню и справка";
         }
         Line::styled(s, inv)
     }
@@ -939,7 +1014,7 @@ impl App {
             return;
         };
         let (w, h) = (COLS as u16, ROWS as u16);
-        if area.width >= w + 2 && area.height > h + 2 {
+        if area.width >= w + 2 && area.height >= h + 2 {
             let outer = Rect::new(area.x, area.y, w + 2, h + 2);
             let hint = format!(" ЮТ-88 · {} ", self.kb_hint());
             f.render_widget(
@@ -967,7 +1042,7 @@ impl App {
                 };
                 format!("нажато {m}{code:02X}H")
             }
-            _ => "F1 — меню".into(),
+            _ => "F11 — меню и справка".into(),
         }
     }
 
@@ -1160,7 +1235,7 @@ impl App {
             bps,
         );
         let help_txt = vec![
-            Line::from("s/F11 шаг  o обход CALL  g/Пробел пуск/стоп"),
+            Line::from("s шаг  o обход CALL  g/Пробел пуск/стоп"),
             Line::from("r до адреса  b точка  p порт  x снять все"),
             Line::from("m дамп с адреса  e правка  стрелки/PgUp/PgDn"),
             Line::from("a код с адреса  c сброс Δ  Esc/F12 — выход"),
@@ -1192,6 +1267,41 @@ impl App {
                 }
                 let r = centered(area, 62, items.len() as u16 + 2);
                 self.list_popup(f, r, " Меню (буква или Enter, Esc — закрыть) ", items, *sel);
+            }
+            Overlay::Help => {
+                let mut lines: Vec<Line> = vec![Line::from(" Горячие клавиши:")];
+                lines.extend(
+                    hotkey_table()
+                        .into_iter()
+                        .map(|l| Line::from(format!("  {l}"))),
+                );
+                lines.push(Line::from(""));
+                if self.pad_view {
+                    lines.push(Line::from(
+                        " Модуль 1: 0–9 A–F — цифры, Backspace — ШАГ НАЗАД, F2 — УСТ",
+                    ));
+                } else {
+                    lines.push(Line::from(
+                        " Дисплей: буквы/цифры — КОИ-7, рус. буквы и Alt+буква — РУС,",
+                    ));
+                    lines.push(Line::from(
+                        "  Ctrl+буква — УС, Enter — ВК, Del/End — СТР, Home — ↖",
+                    ));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(
+                    " Мышью: щелчок по кнопке нижней панели = нажатие F-клавиши;",
+                ));
+                lines.push(Line::from(
+                    " «11Справка» — это окно, если терминал сам забирает F11.",
+                ));
+                let r = centered(area, 68, lines.len() as u16 + 2);
+                f.render_widget(Clear, r);
+                f.render_widget(
+                    Paragraph::new(lines)
+                        .block(Block::bordered().title(" Справка (любая клавиша — закрыть) ")),
+                    r,
+                );
             }
             Overlay::Tape(sel) => {
                 let items: Vec<ListItem> = TAPE_MENU

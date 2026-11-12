@@ -3,8 +3,10 @@
 //! - минимальная конфигурация — шесть семисегментных индикаторов крупными цифрами и
 //!   подсказка клавиатуры модуля 1;
 //! - полная конфигурация — экран дисплейного модуля 64 × 28 текстом;
-//! - горячие клавиши F1–F12 (см. [`keymap::HOTKEYS`]; схема общая с GUI), меню F1
-//!   дублирует их буквами;
+//! - горячие клавиши F2–F12 (см. [`keymap::HOTKEYS`]; схема общая с GUI), меню F11
+//!   дублирует их буквами; нижняя строка — панель кнопок этих клавиш в стиле Midnight
+//!   Commander, щелчок мышью по кнопке равен нажатию (меню и справка доступны и тогда,
+//!   когда терминал забирает F11 себе);
 //! - отладчик (F12) — отдельный экран.
 //!
 //! Вход — [`run`].
@@ -21,8 +23,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{
-    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::{execute, terminal};
 use ut88_core::{CPU_HZ, FRAME_CYCLES, Machine};
@@ -75,14 +77,20 @@ struct TermGuard {
 
 impl Drop for TermGuard {
     fn drop(&mut self) {
-        if self.kitty {
-            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
-        }
+        restore_modes(self.kitty);
         ratatui::restore();
     }
 }
 
-/// Запустить терминальный интерфейс. Возвращается по F10 (или «q» в меню F1).
+/// Выключить захват мыши и расширенный режим клавиатуры (при выходе и по панике).
+fn restore_modes(kitty: bool) {
+    if kitty {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(io::stdout(), DisableMouseCapture);
+}
+
+/// Запустить терминальный интерфейс. Возвращается по F10 (или «q» в меню F11).
 pub fn run(machine: Machine, opts: Options) -> anyhow::Result<()> {
     // ratatui::init ставит обработчик паники, восстанавливающий терминал.
     let mut term = ratatui::init();
@@ -95,14 +103,14 @@ pub fn run(machine: Machine, opts: Options) -> anyhow::Result<()> {
             )
         )
         .is_ok();
+    // Мышь — для панели кнопок горячих клавиш внизу экрана.
+    let _ = execute!(io::stdout(), EnableMouseCapture);
     let _guard = TermGuard { kitty };
-    if kitty {
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
-            prev(info);
-        }));
-    }
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_modes(kitty);
+        prev(info);
+    }));
 
     let mut app = App::new(machine, opts);
     app.kitty = kitty;
@@ -124,6 +132,7 @@ pub fn run(machine: Machine, opts: Options) -> anyhow::Result<()> {
             }
             match event::read()? {
                 Event::Key(k) => app.on_key(k),
+                Event::Mouse(me) => app.on_mouse(me),
                 Event::FocusLost => app.input.clear(&mut app.m),
                 _ => {}
             }

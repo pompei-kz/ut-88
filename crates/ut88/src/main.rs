@@ -311,8 +311,13 @@ mod tests {
         let gui: Vec<&str> = ut88_gui::keymap::HOTKEYS.iter().map(|h| h.0).collect();
         let tui: Vec<&str> = ut88_tui::keymap::HOTKEYS.iter().map(|h| h.0).collect();
         assert_eq!(gui, tui);
-        for (k, what) in [("F2", "УСТ"), ("F12", "отладчик"), ("F8", "агнитофон")]
-        {
+        assert!(!gui.contains(&"F1"), "F1 свободна");
+        for (k, what) in [
+            ("F2", "УСТ"),
+            ("F12", "отладчик"),
+            ("F8", "агнитофон"),
+            ("F11", "правка"),
+        ] {
             let g = ut88_gui::keymap::HOTKEYS.iter().find(|h| h.0 == k).unwrap();
             let t = ut88_tui::keymap::HOTKEYS.iter().find(|h| h.0 == k).unwrap();
             assert!(

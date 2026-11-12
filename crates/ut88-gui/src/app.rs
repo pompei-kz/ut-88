@@ -383,7 +383,6 @@ impl App {
     /// Горячие клавиши — общая схема с TUI (см. [`keymap::HOTKEYS`]).
     fn hotkey(&mut self, ctx: &egui::Context, key: egui::Key, shift: bool) -> bool {
         match key {
-            egui::Key::F1 => self.help_open = !self.help_open,
             egui::Key::F2 => self.press(Hit::Pad(PadKey::Reset), false),
             egui::Key::F3 => {
                 let c = self.m.config().clone();
@@ -398,6 +397,7 @@ impl App {
             egui::Key::F8 => self.tape.open = !self.tape.open,
             egui::Key::F9 => self.programs_open = !self.programs_open,
             egui::Key::F10 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            egui::Key::F11 => self.help_open = !self.help_open,
             egui::Key::F12 => self.dbg.open = !self.dbg.open,
             _ => return false,
         }
@@ -882,7 +882,7 @@ impl App {
                 }
             });
             ui.menu_button("Справка", |ui| {
-                if ui.button("Клавиши (F1)").clicked() {
+                if ui.button("Клавиши (F11)").clicked() {
                     self.help_open = true;
                     ui.close();
                 }
@@ -1017,6 +1017,20 @@ impl App {
         });
     }
 
+    /// Панель кнопок горячих клавиш (как в Norton/Midnight Commander): щелчок — то же,
+    /// что нажатие клавиши.
+    fn fkey_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        ui.horizontal_wrapped(|ui| {
+            for &(label, key, shift, hint) in keymap::FKEY_BAR {
+                let text = RichText::new(label).monospace();
+                if ui.button(text).on_hover_text(hint).clicked() {
+                    self.hotkey(&ctx, key, shift);
+                }
+            }
+        });
+    }
+
     fn help_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Справка: клавиши")
             .open(&mut self.help_open)
@@ -1027,6 +1041,12 @@ impl App {
                     "Клавиша ЮТ-88 держится, пока нажата клавиша ПК (не меньше 0,06 с). \
                      Щелчок мышью по нарисованной клавише держит её не меньше 0,3 с. \
                      РУС, УС, СС мышью «залипают» до следующей клавиши.",
+                );
+                ui.label(
+                    "Это окно открывается клавишей F11, пунктом меню «Справка → Клавиши» \
+                     или кнопкой «F11 Справка» на панели над строкой состояния. Каждая \
+                     горячая клавиша есть на этой панели кнопкой — щелчок мышью равен \
+                     нажатию клавиши.",
                 );
                 ui.heading("Горячие клавиши");
                 egui::Grid::new("hot").striped(true).show(ui, |ui| {
@@ -1312,6 +1332,7 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
+        egui::TopBottomPanel::bottom("fkeys").show(ctx, |ui| self.fkey_bar(ui));
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| self.computer(ui));

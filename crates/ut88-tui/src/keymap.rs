@@ -35,7 +35,6 @@ pub enum Hotkey {
 /// Таблица горячих клавиш: клавиша, действие, описание (для меню и справки). Схема
 /// общая с GUI (`ut88_gui::keymap::HOTKEYS`).
 pub const HOTKEYS: &[(&str, Hotkey, &str)] = &[
-    ("F1", Hotkey::Menu, "меню и справка"),
     ("F2", Hotkey::Reset, "«УСТ» (сброс процессора)"),
     ("F3", Hotkey::ColdStart, "холодный старт (питание)"),
     ("F4", Hotkey::Pause, "пауза / продолжить"),
@@ -50,14 +49,33 @@ pub const HOTKEYS: &[(&str, Hotkey, &str)] = &[
     ("F8", Hotkey::Tape, "магнитофон"),
     ("F9", Hotkey::Programs, "программы из журналов"),
     ("F10", Hotkey::Exit, "выход"),
+    ("F11", Hotkey::Menu, "меню и справка"),
     ("F12", Hotkey::Debugger, "отладчик"),
+];
+
+/// Панель кнопок внизу экрана (как в Midnight Commander): номер F-клавиши, подпись,
+/// действие. Щелчок мышью по кнопке — то же, что нажатие клавиши. Каждая строка
+/// [`HOTKEYS`] есть здесь кнопкой; ширина панели — не больше 80 столбцов (проверяется
+/// тестами).
+pub const KEYBAR: &[(&str, &str, Hotkey)] = &[
+    ("2", "УСТ", Hotkey::Reset),
+    ("3", "Холод", Hotkey::ColdStart),
+    ("4", "Пауза", Hotkey::Pause),
+    ("5", "Скор+", Hotkey::SpeedUp),
+    ("⇧5", "Скор−", Hotkey::SpeedDown),
+    ("6", "Снимок", Hotkey::SaveSnapshot),
+    ("7", "Загр", Hotkey::LoadSnapshot),
+    ("8", "Лента", Hotkey::Tape),
+    ("9", "Прогр", Hotkey::Programs),
+    ("10", "Выход", Hotkey::Exit),
+    ("11", "Справка", Hotkey::Menu),
+    ("12", "Отладка", Hotkey::Debugger),
 ];
 
 /// Горячая клавиша по событию.
 pub fn hotkey(ev: &KeyEvent) -> Option<Hotkey> {
     let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
     Some(match ev.code {
-        KeyCode::F(1) => Hotkey::Menu,
         KeyCode::F(2) => Hotkey::Reset,
         KeyCode::F(3) => Hotkey::ColdStart,
         KeyCode::F(4) => Hotkey::Pause,
@@ -70,6 +88,7 @@ pub fn hotkey(ev: &KeyEvent) -> Option<Hotkey> {
         KeyCode::F(8) => Hotkey::Tape,
         KeyCode::F(9) => Hotkey::Programs,
         KeyCode::F(10) => Hotkey::Exit,
+        KeyCode::F(11) => Hotkey::Menu,
         KeyCode::F(12) => Hotkey::Debugger,
         _ => return None,
     })

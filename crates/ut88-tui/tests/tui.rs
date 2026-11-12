@@ -5,9 +5,11 @@ use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ut88_core::{CPU_HZ, Config, KbKey, Machine, PadKey};
-use ut88_tui::app::{App, View};
+use ut88_tui::app::{App, Overlay, View};
 use ut88_tui::debugger::{Debugger, run_until};
 use ut88_tui::input::{InputQueue, Target};
 use ut88_tui::widgets::buffer_text;
@@ -154,7 +156,8 @@ fn frame_minimal_shows_11() {
     assert!(lines[1].starts_with("  ████████  ████████"), "{}", lines[1]);
     assert!(text.contains("ШАГ НАЗАД"));
     assert!(text.contains("│ C │ D │ E │ F │"));
-    assert!(lines[23].contains("минимальная"));
+    assert!(lines[22].contains("минимальная"));
+    assert!(lines[23].starts_with("2УСТ3Холод4Пауза"), "{}", lines[23]);
 }
 
 #[test]
@@ -170,7 +173,8 @@ fn frame_full_shows_prompt() {
         "│*ЮТ/88*                                                         │"
     );
     assert!(lines[3].starts_with("│ =>"));
-    assert!(lines[31].contains("полная"));
+    assert!(lines[30].contains("полная"));
+    assert!(lines[31].contains("11Справка12Отладка"), "{}", lines[31]);
     // Курсор — инверсное знакоместо.
     let mut term = Terminal::new(TestBackend::new(80, 32)).unwrap();
     term.draw(|f| app.draw(f)).unwrap();
@@ -224,7 +228,7 @@ fn app_hotkeys_and_debugger() {
     app.on_key(key(KeyCode::F(3)));
     assert_eq!(app.m.peek(0xC000), 0);
     // Меню: «q» — выход.
-    app.on_key(key(KeyCode::F(1)));
+    app.on_key(key(KeyCode::F(11)));
     app.on_key(key(KeyCode::Char('q')));
     assert!(app.quit);
 }
@@ -244,12 +248,12 @@ fn snapshot_roundtrip_via_prompts() {
         }
         app.on_key(key(KeyCode::Enter));
     };
-    // Меню F1: «a» — сохранить снимок в файл, «o» — загрузить из файла.
-    app.on_key(key(KeyCode::F(1)));
+    // Меню F11: «a» — сохранить снимок в файл, «o» — загрузить из файла.
+    app.on_key(key(KeyCode::F(11)));
     app.on_key(key(KeyCode::Char('a')));
     type_path(&mut app);
     app.m.poke(0xC000, 0);
-    app.on_key(key(KeyCode::F(1)));
+    app.on_key(key(KeyCode::F(11)));
     app.on_key(key(KeyCode::Char('o')));
     type_path(&mut app);
     assert_eq!(app.m.peek(0xC000), 0xAB);
@@ -334,4 +338,112 @@ fn programs_menu_loads_and_runs() {
     ))
     .unwrap();
     assert_eq!(app.m.save_bin(0xC000, 0xC000 + data.len() as u16 - 1), data);
+}
+
+fn click(app: &mut App, column: u16, row: u16) {
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    });
+}
+
+/// Щелчок по кнопке панели с действием `hk` (координаты — из последней отрисовки).
+fn click_hotkey(app: &mut App, hk: keymap::Hotkey) {
+    render(app, 80, 32);
+    let (r, _) = app
+        .keybar_buttons()
+        .into_iter()
+        .find(|b| b.1 == hk)
+        .unwrap_or_else(|| panic!("нет кнопки {hk:?}"));
+    // Щёлкаем по последней клетке кнопки — по подписи.
+    click(app, r.right() - 1, r.y);
+}
+
+#[test]
+fn keybar_fits_80_and_covers_hotkeys() {
+    let w: usize = keymap::KEYBAR
+        .iter()
+        .map(|(n, l, _)| n.chars().count() + l.chars().count())
+        .sum();
+    assert!(w <= 80, "панель шириной {w}");
+    for (k, hk, _) in keymap::HOTKEYS {
+        assert!(
+            keymap::KEYBAR.iter().any(|b| b.2 == *hk),
+            "{k} нет на панели"
+        );
+    }
+    // Номер на кнопке совпадает с клавишей.
+    for (n, _, hk) in keymap::KEYBAR {
+        let k = keymap::HOTKEYS.iter().find(|h| h.1 == *hk).unwrap().0;
+        assert_eq!(k.replace("Shift+F", "⇧").replace('F', ""), *n);
+    }
+    // В 80 столбцах нарисованы все кнопки.
+    let app = App::new(Machine::new(Config::full()), Options::default());
+    render(&app, 80, 32);
+    assert_eq!(app.keybar_buttons().len(), keymap::KEYBAR.len());
+}
+
+#[test]
+fn keybar_mouse_clicks() {
+    use keymap::Hotkey;
+    let mut app = App::new(Machine::new(Config::minimal()), Options::default());
+    // F11 — меню; «11Справка» мышью открывает и закрывает меню.
+    app.on_key(key(KeyCode::F(11)));
+    assert!(matches!(app.overlay, Some(Overlay::Menu(_))));
+    app.on_key(key(KeyCode::F(11)));
+    assert!(app.overlay.is_none());
+    click_hotkey(&mut app, Hotkey::Menu);
+    assert!(matches!(app.overlay, Some(Overlay::Menu(_))));
+    let text = render(&app, 80, 32);
+    assert!(text.contains("справка: все клавиши"), "{text}");
+    click_hotkey(&mut app, Hotkey::Menu);
+    assert!(app.overlay.is_none());
+    // F1 больше ничего не делает.
+    app.on_key(key(KeyCode::F(1)));
+    assert!(app.overlay.is_none());
+    // Полная справка из меню: «?».
+    click_hotkey(&mut app, Hotkey::Menu);
+    app.on_key(key(KeyCode::Char('?')));
+    assert!(matches!(app.overlay, Some(Overlay::Help)));
+    let text = render(&app, 80, 32);
+    assert!(text.contains("F11       меню и справка"), "{text}");
+    assert!(text.contains("11Справка"), "{text}");
+    click_hotkey(&mut app, Hotkey::Menu);
+    assert!(app.overlay.is_none());
+    // Пауза, скорость, магнитофон, отладчик, выход — щелчками.
+    click_hotkey(&mut app, Hotkey::Pause);
+    assert!(!app.running());
+    click_hotkey(&mut app, Hotkey::Pause);
+    assert!(app.running());
+    click_hotkey(&mut app, Hotkey::SpeedUp);
+    assert_eq!(app.speed, 2.0);
+    click_hotkey(&mut app, Hotkey::SpeedDown);
+    assert_eq!(app.speed, 1.0);
+    click_hotkey(&mut app, Hotkey::Tape);
+    assert!(matches!(app.overlay, Some(Overlay::Tape(_))));
+    // Щелчок по другой кнопке закрывает окно и выполняет действие.
+    click_hotkey(&mut app, Hotkey::Debugger);
+    assert!(app.overlay.is_none());
+    assert_eq!(app.view, View::Debugger);
+    click_hotkey(&mut app, Hotkey::Debugger);
+    assert_eq!(app.view, View::Machine);
+    app.m.poke(0xC000, 0x55);
+    click_hotkey(&mut app, Hotkey::ColdStart);
+    assert_eq!(app.m.peek(0xC000), 0);
+    // Щелчок мимо кнопок и правой кнопкой — ничего.
+    render(&app, 80, 32);
+    click(&mut app, 79, 31);
+    click(&mut app, 10, 5);
+    let r = app.keybar_buttons()[0].0;
+    app.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: r.x,
+        row: r.y,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(app.overlay.is_none() && !app.quit);
+    click_hotkey(&mut app, Hotkey::Exit);
+    assert!(app.quit);
 }
