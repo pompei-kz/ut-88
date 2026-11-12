@@ -5,7 +5,7 @@
 
 An emulator of the **UT-88** («ЮТ-88»), a Soviet do-it-yourself home computer published
 part by part in 1989–1990 by the magazine «ЮТ для умелых рук» (a supplement to
-«Юный техник», *Young Technician*). The computer is built around the **KR580VM80A**
+«Юный техник», *Young Technician*). The computer is built around the **КР580ВМ80А**
 CPU, the Soviet clone of the **Intel 8080**, and is modular: a processor module with a
 six-digit LED display and a 16-key hex keypad, a display module (64×28 text screen and a
 full keyboard), 64 KB RAM, a RAM disk (the "quasi-disk", «квазидиск») and CP/M.
@@ -316,7 +316,7 @@ target/release/ut88 --snapshot ut88-quick.snap            # continue from a snap
 
 | Path                | Contents                                                                       |
 |---------------------|--------------------------------------------------------------------------------|
-| `crates/i8080`      | KR580VM80A / Intel 8080 CPU emulator (passes the classic 8080 test suites)     |
+| `crates/i8080`      | КР580ВМ80А / Intel 8080 CPU emulator (passes the classic 8080 test suites)     |
 | `crates/ut88-core`  | the machine: memory map, devices, display, keyboard, tape, RAM disk, snapshots |
 | `crates/ut88-audio` | sound output (cpal)                                                            |
 | `crates/ut88-gui`   | the window (egui / eframe)                                                     |

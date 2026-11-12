@@ -35,7 +35,7 @@ are in Russian.
 
 ## 1. What it is
 
-The UT-88 is a home-built personal computer based on the KR580VM80A processor (a Soviet
+The UT-88 is a home-built personal computer based on the КР580ВМ80А processor (a Soviet
 clone of the Intel 8080). It was published piece by piece in 1989–1990 by the magazine
 «ЮТ для умелых рук» ("UT for Skillful Hands", a supplement to «Юный техник», "Young
 Technician"). The computer is modular, and the emulator supports four of its
@@ -64,8 +64,8 @@ More about the modes of the full configuration:
   processor's stack accesses go to the RAM disk banks while a bank is open. CP/M-64,
   CP/M-35 and UT-88 OS run in this configuration (section 11).
 
-The processor runs at 16 MHz / 9 ≈ 1.78 MHz (as with the KR580GF24 clock generator chip and
-a 16 MHz crystal). Once per second the K176IE5 clock chip raises an `RST 7` interrupt
+The processor runs at 16 MHz / 9 ≈ 1.78 MHz (as with the КР580ГФ24 clock generator chip and
+a 16 MHz crystal). Once per second the К176ИЕ5 clock chip raises an `RST 7` interrupt
 request.
 
 Memory map and ports: [doc/02-arhitektura.md](../doc/02-arhitektura.md),
@@ -689,7 +689,7 @@ jumps to an unknown place.
 affect the carry flag: if an interrupt arrives while the interrupted program has CY = 1
 (which happens often in the MONITOR-F keyboard polling loop), `DAA` adds 60H — the seconds
 jump, for example, from 27 to 88, the carry into minutes is lost, and the LED display shows
-"garbage". A real KR580VM80A behaves the same way; the same bug is in the module 1 MONITOR
+"garbage". A real КР580ВМ80А behaves the same way; the same bug is in the module 1 MONITOR
 clock (00CFH). It can be worked around with a stub in RAM: at vector 0038H, instead of
 `JMP FFC1H` —
 `PUSH PSW; ORA A; CALL FFC1H; POP PSW; RET`.

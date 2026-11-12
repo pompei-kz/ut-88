@@ -13,7 +13,7 @@ First public release.
 
 ### Added
 
-- KR580VM80A / Intel 8080 CPU emulator, cycle-counted, passing TST8080, 8080PRE,
+- КР580ВМ80А / Intel 8080 CPU emulator, cycle-counted, passing TST8080, 8080PRE,
   CPUTEST and 8080EXM.
 - UT-88 machine in four configurations: processor module only (MONITOR ROM, six LEDs,
   hex keypad), full (display module 64×28, full keyboard, MONITOR-F, 64 KB RAM), full
