@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- КР580ВМ80А assembler `asm-k580vm80a`: all 244 documented instructions in Intel
+  mnemonics, expressions, `ORG`/`EQU`/`SET`/`DB`/`DW`/`DS`/`END`/`INCBIN`, preprocessor
+  (`INCLUDE`, `IF`/`IFDEF`/`ELSE`, `MACRO` with `LOCAL`/`EXITM`, `REPT`), KOI-7 strings,
+  listings in the `monitor/monitor.lst` format, output as bin, the magazine hex dump,
+  Intel HEX or relocatable `.link` object files (`CSEG`/`DSEG`/`ASEG`,
+  `PUBLIC`/`EXTRN`); detailed help in Russian (`-h`) and English (`-he`).
+- Linker `link-k580vm80a`: places modules, resolves symbols and relocations, writes
+  bin/hex/Intel HEX and a link map.
+- `monitor/monitor.asm` assembles byte-for-byte into `monitor/monitor-fixed.bin`.
+- Assembly examples in `examples/asm/` (the magazine programs «11» on the LEDs, memory
+  fill and «Гамма» byte-for-byte, MONITOR-F «Hello», macros, two linked modules) and
+  `make asm`, `make asm-run`, `make link`, `make asm-examples`.
+- Assembler guide: `docs/ASSEMBLER.md` (English) and `doc/43-assembler.md` (Russian).
+
 ## [0.1.0] - 2026-11-12
 
 First public release.

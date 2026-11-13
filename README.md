@@ -55,23 +55,27 @@ cd ut-88
 make base
 ```
 
-| Command                 | What it does                                                                               |
-|-------------------------|--------------------------------------------------------------------------------------------|
-| `make` / `make compile` | build the binaries (`target/release/ut88`)                                                 |
-| `make help`             | list all commands                                                                          |
-| `make base`             | basic computer: processor module (module 1) with LED display and keypad                    |
-| `make full`             | full computer: display module, MONITOR-F, 64 KB RAM                                        |
-| `make tetris`           | the Tetris game from the magazine (full configuration)                                     |
-| `make cpm`              | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                        |
-| `make os`               | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                    |
-| `make prog P=NAME`      | a program from `programs/`, e.g. `make prog P=gamma`                                       |
-| `make programs`         | list the programs in `programs/`                                                           |
-| `make …-t`              | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
-| `make test`             | run the tests                                                                              |
-| `make test-all`         | all tests, including the long ones (8080 exerciser, Tetris)                                |
-| `make lint`             | `cargo clippy` and `cargo fmt --check`                                                     |
-| `make fmt`              | format the code                                                                            |
-| `make clean`            | remove build results                                                                       |
+| Command                   | What it does                                                                               |
+|---------------------------|--------------------------------------------------------------------------------------------|
+| `make` / `make compile`   | build the binaries (`target/release/ut88`)                                                 |
+| `make help`               | list all commands                                                                          |
+| `make base`               | basic computer: processor module (module 1) with LED display and keypad                    |
+| `make full`               | full computer: display module, MONITOR-F, 64 KB RAM                                        |
+| `make tetris`             | the Tetris game from the magazine (full configuration)                                     |
+| `make cpm`                | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                        |
+| `make os`                 | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                    |
+| `make prog P=NAME`        | a program from `programs/`, e.g. `make prog P=gamma`                                       |
+| `make programs`           | list the programs in `programs/`                                                           |
+| `make asm F=FILE.asm`     | assemble a program (КР580ВМ80А assembly) into `FILE.hex`; `O=` sets the output             |
+| `make asm-run F=FILE.asm` | assemble and run it in the emulator (`C=minimal\|full` sets the configuration)             |
+| `make link O=OUT.hex M=…` | link object modules, e.g. `M="a.link b.link"` (`B=` sets the load address)                 |
+| `make asm-examples`       | build all examples from `examples/asm/`                                                    |
+| `make …-t`                | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
+| `make test`               | run the tests                                                                              |
+| `make test-all`           | all tests, including the long ones (8080 exerciser, Tetris)                                |
+| `make lint`               | `cargo clippy` and `cargo fmt --check`                                                     |
+| `make fmt`                | format the code                                                                            |
+| `make clean`              | remove build results                                                                       |
 
 What happens after each command and what to do next is described below. In every
 window the hot keys are the same: **F2** is the RESET button («УСТ»), **F11** shows the
@@ -275,6 +279,23 @@ terminals grab **F11**: then click the «11Справка» button in the bottom
 and help. Terminals do not report key releases, so the emulator holds every key press
 itself for a moment; keys can be typed quickly.
 
+### Assembler
+
+The repository also has a cross-assembler for the КР580ВМ80А, `asm-k580vm80a` (Intel
+mnemonics, macros, conditional assembly, listings; output as a flat binary, the
+magazine hex dump, Intel HEX or relocatable `.link` modules), and the linker
+`link-k580vm80a`. Write a program on the PC and run it in one step:
+
+```sh
+make asm-run F=examples/asm/hello.asm   # prints «HELLO, WORLD!» via MONITOR-F
+```
+
+The examples in [`examples/asm/`](examples/asm/) include the magazine programs
+(«11» on the LEDs, memory fill, «Гамма» — byte-for-byte identical to `programs/`), a
+MONITOR-F «Hello», macros and a two-module program. See
+[docs/ASSEMBLER.md](docs/ASSEMBLER.md) (Russian: [doc/43-assembler.md](doc/43-assembler.md))
+and `asm-k580vm80a -he` for the full reference.
+
 ### Hot keys and the button bar
 
 The same scheme in the window and in the terminal. Every key is also a button in the bar
@@ -299,6 +320,8 @@ at the bottom — a click equals the key press.
   options, menus, keyboards, both MONITORs, tape, snapshots, debugger, every program,
   RAM disk, CP/M and the UT-88 OS, troubleshooting;
 - [manual.md](manual.md) — the same manual in Russian;
+- [docs/ASSEMBLER.md](docs/ASSEMBLER.md) — the КР580ВМ80А assembler and linker
+  (Russian: [doc/43-assembler.md](doc/43-assembler.md));
 - [doc/README.md](doc/README.md) — the magazine articles converted to Markdown, with
   notes and annotated listings (Russian);
 - [programs/README.md](programs/README.md) — the programs, their addresses and checksums
@@ -314,21 +337,23 @@ target/release/ut88 --snapshot ut88-quick.snap            # continue from a snap
 
 ## Project layout
 
-| Path                | Contents                                                                       |
-|---------------------|--------------------------------------------------------------------------------|
-| `crates/i8080`      | КР580ВМ80А / Intel 8080 CPU emulator (passes the classic 8080 test suites)     |
-| `crates/ut88-core`  | the machine: memory map, devices, display, keyboard, tape, RAM disk, snapshots |
-| `crates/ut88-audio` | sound output (cpal)                                                            |
-| `crates/ut88-gui`   | the window (egui / eframe)                                                     |
-| `crates/ut88-tui`   | the terminal interface (ratatui)                                               |
-| `crates/ut88`       | the `ut88` binary and its command line                                         |
-| `roms/`             | ROM images and system dumps from the magazine (MONITOR-F, CP/M, OS, …)         |
-| `monitor/`          | the module 1 MONITOR ROM: dump, fixed image, annotated disassembly             |
-| `programs/`         | programs from the magazine, `.bin` and `.hex`                                  |
-| `doc/`              | the magazine articles in Markdown (Russian) and their illustrations            |
-| `docs/`             | the English manual and screenshots                                             |
-| `scripts/`          | helper scripts used by the Makefile                                            |
-| `plans/`            | task statements, plans and deviation logs of the development (Russian)         |
+| Path                   | Contents                                                                       |
+|------------------------|--------------------------------------------------------------------------------|
+| `crates/i8080`         | КР580ВМ80А / Intel 8080 CPU emulator (passes the classic 8080 test suites)     |
+| `crates/ut88-core`     | the machine: memory map, devices, display, keyboard, tape, RAM disk, snapshots |
+| `crates/ut88-audio`    | sound output (cpal)                                                            |
+| `crates/ut88-gui`      | the window (egui / eframe)                                                     |
+| `crates/ut88-tui`      | the terminal interface (ratatui)                                               |
+| `crates/ut88`          | the `ut88` binary and its command line                                         |
+| `crates/asm-k580vm80a` | the assembler `asm-k580vm80a` and the linker `link-k580vm80a`                  |
+| `examples/asm/`        | example programs in assembly language                                          |
+| `roms/`                | ROM images and system dumps from the magazine (MONITOR-F, CP/M, OS, …)         |
+| `monitor/`             | the module 1 MONITOR ROM: dump, fixed image, annotated disassembly             |
+| `programs/`            | programs from the magazine, `.bin` and `.hex`                                  |
+| `doc/`                 | the magazine articles in Markdown (Russian) and their illustrations            |
+| `docs/`                | the English manuals and screenshots                                            |
+| `scripts/`             | helper scripts used by the Makefile                                            |
+| `plans/`               | task statements, plans and deviation logs of the development (Russian)         |
 
 ## Development
 

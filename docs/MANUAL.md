@@ -1025,6 +1025,17 @@ the program and play with it; description — [doc/42-programmator.md](../doc/42
   [doc/40-bolotudu.md](../doc/40-bolotudu.md), [doc/41-zhizn.md](../doc/41-zhizn.md)
   (in Russian).
 
+### Your own programs in assembly language
+
+You can write a program for the КР580ВМ80А in assembly language on the PC, build it with
+the assembler `asm-k580vm80a` (modules — with the linker `link-k580vm80a`) and load it
+into the emulator. The easiest way is make: `make asm-run F=examples/asm/hello.asm`
+builds the dump `examples/asm/hello.hex` and runs it in the right configuration;
+`make asm F=file.asm` only builds. Examples are in `examples/asm/` («11» on the LEDs,
+memory fill, «Гамма», «Hello» for MONITOR-F, macros, a program of two modules). Guide —
+[ASSEMBLER.md](ASSEMBLER.md); the complete reference — `asm-k580vm80a -he` and
+`link-k580vm80a -he`.
+
 ---
 
 ## 11. RAM disk and CP/M
