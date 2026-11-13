@@ -5,7 +5,7 @@ ASM := target/release/asm-k580vm80a
 LINK := target/release/link-k580vm80a
 
 .PHONY: compile help base base-t full full-t tetris tetris-t cpm cpm-t os os-t \
-        prog prog-t programs asm asm-run link asm-examples test test-all lint fmt align-md clean
+        prog prog-t programs asm asm-run asm-load link asm-examples test test-all lint fmt align-md clean
 
 ## Собрать бинарники (по умолчанию)
 compile:
@@ -74,6 +74,10 @@ asm: compile
 ## Собрать и запустить в эмуляторе: make asm-run F=файл.asm [C=minimal|full]
 asm-run: compile
 	scripts/asm-run.sh $(F) $(C)
+
+## Собрать и загрузить, не запуская (запуск — G адрес): make asm-load F=файл.asm [C=full|minimal]
+asm-load: compile
+	NORUN=1 scripts/asm-run.sh $(F) $(or $(C),full)
 
 ## Скомпоновать модули: make link O=файл.hex M="a.link b.link" [B=адрес]
 link: compile

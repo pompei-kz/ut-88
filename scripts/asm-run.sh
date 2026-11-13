@@ -6,7 +6,9 @@
 # аргумента, иначе угадывается по тексту: обращения к МОНИТОРУ-F (F800H–FFFFH) или к
 # экрану (E000H–EFFFH) — full, иначе minimal.
 # Переменные окружения: UT88 (по умолчанию target/release/ut88), ASM
-# (target/release/asm-k580vm80a); UT88=echo — только показать команду запуска.
+# (target/release/asm-k580vm80a); UT88=echo — только показать команду запуска;
+# NORUN=1 — только загрузить программу, не запуская (запуск — директивой МОНИТОРА:
+# G адрес у МОНИТОРА-F, «7 адрес» у МОНИТОРА модуля 1).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -47,5 +49,11 @@ case $config in
     *) echo "Неизвестная конфигурация «$config» (minimal или full)." >&2; exit 1 ;;
 esac
 
-echo "asm-run: $src → $hex, конфигурация $config, пуск с $start" >&2
-"$UT88" --config "$config" --load "$hex" --run "$start" "$@"
+if [[ ${NORUN:-} == 1 ]]; then
+    if [[ $config == full ]]; then how="G$start и Enter"; else how="7 $start"; fi
+    echo "asm-load: $src → $hex, конфигурация $config, загружено с $start, не запущено; запуск — $how" >&2
+    "$UT88" --config "$config" --load "$hex" "$@"
+else
+    echo "asm-run: $src → $hex, конфигурация $config, пуск с $start" >&2
+    "$UT88" --config "$config" --load "$hex" --run "$start" "$@"
+fi
