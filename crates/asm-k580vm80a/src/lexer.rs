@@ -75,7 +75,7 @@ pub fn is_ident_char(c: char) -> bool {
 }
 
 /// Индекс начала комментария `;` вне кавычек (или длина строки).
-fn comment_start(chars: &[char]) -> usize {
+pub(crate) fn comment_start(chars: &[char]) -> usize {
     let mut quote: Option<char> = None;
     let mut i = 0;
     while i < chars.len() {
@@ -101,7 +101,7 @@ fn comment_start(chars: &[char]) -> usize {
     chars.len()
 }
 
-fn read_word(chars: &[char], start: usize) -> usize {
+pub(crate) fn read_word(chars: &[char], start: usize) -> usize {
     let mut e = start;
     while e < chars.len() && is_ident_char(chars[e]) {
         e += 1;

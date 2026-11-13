@@ -18,14 +18,15 @@ OPTIONS
                  -o file name does not matter.
                    asm-k580vm80a -f hello.asm -o hello.txt -t hex
                    asm-k580vm80a -f rom.asm -o rom.img -t bin
-  -l FILE        listing: address, codes, source line, symbol table (in development).
+  -l FILE        listing: address, codes, source line, symbol table (see LISTING).
+                   asm-k580vm80a -f prog.asm -o prog.hex -l prog.lst
   -D NAME[=VAL]  define a symbol, like EQU at the top of the source. Without a value
                  it is 1. The value is a number in assembler notation (0C000H, 10, -1,
                  $FF).
                    asm-k580vm80a -f prog.asm -o prog.bin -D DEBUG -D BASE=0C000H
-  -I DIR         search directory for INCBIN (and INCLUDE) files, may be repeated.
-                 The directory of the source file is searched first, then the -I
-                 directories in order.
+  -I DIR         search directory for INCLUDE and INCBIN files, may be repeated.
+                 The directory of the file with the directive is searched first,
+                 then the -I directories in order.
                    asm-k580vm80a -f game.asm -o game.hex -I data -I ../common
   --fill XX      filler byte for gaps in bin output (hexadecimal, default 00).
                    asm-k580vm80a -f rom.asm -o rom.bin --fill FF
@@ -69,12 +70,42 @@ OUTPUT FILE FORMATS
           :040000030000C00039      (start address C000H)
           :00000001FF
 
+LISTING (-l)
+
+  The listing is written together with an output file of any type (it is not
+  created when there are errors); the format is that of monitor/monitor.lst:
+
+    0000  31 EE C3      START:      LXI     SP,STACK
+    03FA  FF FF FF FF               DB      0FFH,0FFH,0FFH,0FFH,0FFH,0FFH
+    03FE  FF FF
+         =9000          DISP_D      EQU     9000H
+    C016  00           +        NOP
+                       -        MVI     B,2
+    0003' 01 02 03 04 1         DB 1,2,3,4
+
+  * columns 1–4 — the address (for a line without codes only if it has a label or
+    DS); column 5 — a space for an absolute address, ' — offset in CSEG, " — in DSEG;
+  * up to 4 code bytes; long DB, DW, DS, INCBIN continue on the following lines
+    (address and codes, no text);
+  * EQU and SET show =value instead of the address (* — value based on an external
+    symbol);
+  * column 19 — INCLUDE depth (blank — main file, 1, 2…), column 20 — «+» for lines
+    of a macro or REPT expansion, «-» for lines of a false IF branch (not assembled);
+  * from column 21 — the source line. Preprocessor directives and bodies of macro
+    definitions are shown without codes.
+
+  At the end — the symbol table in alphabetical order: name, value, segment (абс. =
+  absolute, CSEG, DSEG, внешн. = external), kind (метка = label, EQU, SET, EXTRN, -D;
+  PUBLIC) and where it is defined (file:line). The headers of the listing are in
+  Russian. CSEG/DSEG addresses in the listing are offsets from the segment start.
+    asm-k580vm80a -f prog.asm -o prog.hex -l prog.lst
+
 LINE SYNTAX
 
   [label[:]]  [mnemonic|directive  [operands]]  [; comment]
 
   * A label is a name followed by a colon anywhere on the line, or a name without a
-    colon starting in the first column. A name before EQU and SET is a label even
+    colon starting in the first column. A name before EQU, SET and MACRO is a label even
     if the line is indented.
   * Names: Latin letters, digits, _ ? @ . ; the first one is not a digit. Case does
     not matter in mnemonics, registers, directives and NAMES: Loop, LOOP and loop
@@ -182,8 +213,89 @@ DIRECTIVES
                          symbol is an error: such programs are assembled to .link
                          files and linked.
 
-  In development (preprocessor): INCLUDE "file", IF/ELSE/ENDIF, IFDEF/IFNDEF,
-  MACRO/ENDM, LOCAL, REPT/ENDM.
+PREPROCESSOR
+
+  Preprocessor directives are executed while the source is read, before a line is
+  assembled: they insert files, select branches of conditional assembly, expand
+  macros and repetitions. Like instructions, directive names are case-insensitive.
+
+  INCLUDE "file"         insert the text of a file in place of this line. Search
+                         order: the directory of the file containing the INCLUDE,
+                         then the -I directories in order, then the current
+                         directory. Includes may be nested (up to 16 levels);
+                         including a file that is already being included (recursion)
+                         is an error. An error in an included file is reported with
+                         its name and line and a chain of notes «включено из
+                         main.asm:3» (included from).
+                           INCLUDE "defs.inc"
+
+  IF expression          conditional assembly: the lines up to ELSE (or ENDIF) are
+  ELSE                   assembled if the value is not 0, otherwise the lines after
+  ENDIF                  ELSE. The expression is evaluated when the line is read:
+                         its symbols must be defined above or with -D (a forward
+                         reference is an error), the value must be absolute. IFs may
+                         be nested; lines of a false branch are neither parsed nor
+                         assembled. An IF opened in an included file or a macro must
+                         be closed there.
+  IFDEF name             like IF; the condition is that the symbol is defined above
+  IFNDEF name            or with -D (for IFNDEF — not defined).
+                           IFDEF   DEBUG
+                           CALL    DUMP
+                           ENDIF
+                           IF      BAUD GT 1200
+                           MVI     A,1
+                           ELSE
+                           MVI     A,2
+                           ENDIF
+
+  name MACRO [p1,p2,...] define a macro; the body lasts until ENDM. A call looks like
+  ENDM                   an instruction: [label:] name [a1,a2,...]. Parameters are
+                         replaced by the argument text word by word (case does not
+                         matter); missing arguments are empty, extra ones are an
+                         error. An argument containing a comma is written in <…>
+                         (the brackets are removed), in quotes or in parentheses.
+                         Inside quotes only the form &p is substituted; & outside
+                         quotes glues words: L&N with N=1 gives L1. Comments are not
+                         changed. A macro may call macros, also recursively (exiting
+                         via IF/EXITM); nesting is limited to 64 levels, deeper is an
+                         error «возможна бесконечная рекурсия» (possible infinite
+                         recursion). A macro may be redefined; its name may not be an
+                         instruction or a directive. A macro name in the first
+                         column is a call, not a label.
+  LOCAL name,...         (in a macro or REPT body) local labels: on every expansion
+                         the names are replaced by unique ??0001, ??0002…
+  EXITM                  end the expansion of the macro early (in REPT — all the
+                         remaining repetitions).
+                           DELAY   MACRO   N           ; delay of N loops
+                                   LOCAL   AGAIN
+                                   MVI     B,N
+                           AGAIN:  DCR     B
+                                   JNZ     AGAIN
+                                   ENDM
+                           OUTP    MACRO   PORT,VAL
+                                   IF      VAL = 0
+                                   XRA     A
+                                   ELSE
+                                   MVI     A,VAL
+                                   ENDIF
+                                   OUT     PORT
+                                   ENDM
+                                   OUTP    0A1H,0
+                                   DELAY   10
+                                   DELAY   20          ; its own AGAIN label
+
+  REPT n                 repeat the lines up to ENDM n times (0…65535; the value must
+  ENDM                   be known above). REPT and MACRO may be nested.
+                           N       SET     0
+                                   REPT    4
+                           N       SET     N+1
+                                   DB      N*N         ; 1, 4, 9, 16
+                                   ENDM
+
+  An error in a macro body shows the body line and the place of the call:
+    prog.asm:3:15: ошибка: неизвестный символ X
+        примечание: из макроса DELAY, вызванного в prog.asm:12
+  Unclosed IF, MACRO and REPT are errors («IF без ENDIF», «MACRO без ENDM»).
 
 STRING ENCODING
 

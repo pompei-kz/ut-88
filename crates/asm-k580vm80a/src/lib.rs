@@ -1,10 +1,11 @@
 //! Ассемблер КР580ВМ80А (Intel 8080) для компьютера ЮТ-88.
 //!
-//! Схема работы: [`source`] (строки исходного текста; сюда встраивается препроцессор) →
+//! Схема работы: [`source`] (строки исходного текста) → [`preprocess`] (INCLUDE, IF,
+//! MACRO, REPT) →
 //! [`lexer`] (метка, мнемоника, операнды) → [`expr`] (выражения со значениями с признаком
 //! перемещаемости) → [`assembler`] (два прохода, команды из [`opcodes`], директивы) →
 //! [`ir`] (модуль: сегменты + перемещения + символы) → [`output`] (bin, дамп журнала,
-//! Intel HEX).
+//! Intel HEX) и [`listing`] (листинг).
 //!
 //! ```
 //! use asm_k580vm80a::{assemble, Options, ir::Placement};
@@ -20,8 +21,10 @@ pub mod error;
 pub mod expr;
 pub mod ir;
 pub mod lexer;
+pub mod listing;
 pub mod opcodes;
 pub mod output;
+pub mod preprocess;
 pub mod source;
 
 use std::path::{Path, PathBuf};
@@ -42,13 +45,14 @@ pub struct Options {
     pub include_dirs: Vec<PathBuf>,
 }
 
-/// Собрать текст `text` (имя файла `file` — для сообщений и поиска INCBIN).
+/// Собрать текст `text` с препроцессором (имя файла `file` — для сообщений и поиска
+/// INCLUDE/INCBIN).
 pub fn assemble(file: &str, text: &str, opts: &Options) -> Result<Assembly, Vec<AsmError>> {
-    assemble_with(&source::TextProvider::new(file, text), opts)
+    assemble_with(&preprocess::Preprocessor::text(file, text), opts)
 }
 
-/// Собрать файл.
+/// Собрать файл с препроцессором.
 pub fn assemble_file(path: &Path, opts: &Options) -> Result<Assembly, Vec<AsmError>> {
-    let provider = source::TextProvider::from_file(path).map_err(|e| vec![e])?;
+    let provider = preprocess::Preprocessor::file(path).map_err(|e| vec![e])?;
     assemble_with(&provider, opts)
 }

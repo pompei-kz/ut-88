@@ -217,9 +217,6 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         }
     }
-    if m.get_one::<String>("listing").is_some() {
-        return usage_err(err, "листинг (-l) пока не реализован");
-    }
     if format == Format::Link {
         return usage_err(
             err,
@@ -241,6 +238,15 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Format::Ihex => img.to_ihex().into_bytes(),
         Format::Link => unreachable!("проверено выше"),
     };
+    if let Some(lst) = m.get_one::<String>("listing")
+        && let Err(e) = std::fs::write(lst, asm.listing())
+    {
+        let _ = writeln!(
+            err,
+            "asm-k580vm80a: ошибка: не записывается листинг {lst}: {e}"
+        );
+        return 1;
+    }
     if let Err(e) = std::fs::write(&output, data) {
         let _ = writeln!(
             err,

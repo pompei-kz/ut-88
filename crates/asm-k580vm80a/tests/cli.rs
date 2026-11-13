@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use asm_k580vm80a::assembler::DIRECTIVES;
+use asm_k580vm80a::assembler::{DIRECTIVES, PREPROCESSOR_DIRECTIVES};
 use asm_k580vm80a::cli::{HELP_EN, HELP_RU, HINT, run};
 use asm_k580vm80a::opcodes::TABLE;
 
@@ -245,8 +245,11 @@ fn help_covers_everything() {
         for k in keys {
             assert!(help.contains(k), "ключ {k} не описан");
         }
-        for d in DIRECTIVES {
+        for d in DIRECTIVES.iter().chain(PREPROCESSOR_DIRECTIVES) {
             assert!(words.contains(d), "директива {d} не описана");
+        }
+        for sec in ["INCLUDE \"", "-l ", "IFDEF", "LOCAL", "EXITM", "REPT"] {
+            assert!(help.contains(sec), "{sec} не описан");
         }
         for (m, _) in TABLE {
             assert!(words.contains(m), "команда {m} не описана");
@@ -286,4 +289,102 @@ LOOP:   DW START, LOOP, 0
 ";
     let a = asm_k580vm80a::assemble("ex.asm", src, &Default::default());
     assert!(a.is_ok(), "{:?}", a.err());
+}
+
+/// Примеры препроцессора из справки (-h и -he) есть в справке и собираются.
+#[test]
+fn help_preprocessor_examples_assemble() {
+    let examples = [
+        "\
+IFDEF   DEBUG
+CALL    DUMP
+ENDIF
+IF      BAUD GT 1200
+MVI     A,1
+ELSE
+MVI     A,2
+ENDIF",
+        "\
+DELAY   MACRO   N
+        LOCAL   AGAIN
+        MVI     B,N
+AGAIN:  DCR     B
+        JNZ     AGAIN
+        ENDM
+OUTP    MACRO   PORT,VAL
+        IF      VAL = 0
+        XRA     A
+        ELSE
+        MVI     A,VAL
+        ENDIF
+        OUT     PORT
+        ENDM
+        OUTP    0A1H,0
+        DELAY   10",
+        "\
+N       SET     0
+        REPT    4
+N       SET     N+1
+        DB      N*N
+        ENDM",
+    ];
+    for help in [HELP_RU, HELP_EN] {
+        for ex in examples {
+            for l in ex.lines() {
+                assert!(help.contains(l), "в справке нет строки примера «{l}»");
+            }
+        }
+    }
+    let mut src = String::from("BAUD EQU 2400\nDEBUG EQU 1\n");
+    for l in examples[0].lines() {
+        src.push_str(&format!("        {l}\n"));
+    }
+    src.push_str(&format!("{}\n{}\nDUMP: RET\n", examples[1], examples[2]));
+    let a = asm_k580vm80a::assemble("ex.asm", &src, &Default::default())
+        .unwrap_or_else(|e| panic!("{}", e[0]));
+    let img = a.to_image(&Default::default()).unwrap();
+    assert_eq!(
+        img.to_bin(0),
+        vec![
+            0xCD, 0x12, 0x00, // CALL DUMP
+            0x3E, 0x01, // MVI A,1
+            0xAF, 0xD3, 0xA1, // OUTP 0A1H,0
+            0x06, 0x0A, 0x05, 0xC2, 0x0A, 0x00, // DELAY 10
+            1, 4, 9, 16,   // REPT
+            0xC9, // DUMP: RET
+        ]
+    );
+}
+
+/// -l пишет листинг при сборке в любой формат; при ошибке листинг не создаётся.
+#[test]
+fn listing_option() {
+    let d = Dir::new("lst");
+    let src = d.p("p.asm");
+    std::fs::write(&src, PROG).unwrap();
+    for (out, t) in [("p.hex", None), ("p.bin", None), ("p.dat", Some("ihex"))] {
+        let lst = d.p("p.lst");
+        let _ = std::fs::remove_file(&lst);
+        let out = d.p(out);
+        let mut args = vec!["-f", s(&src), "-o", s(&out), "-l", s(&lst)];
+        if let Some(t) = t {
+            args.extend(["-t", t]);
+        }
+        let (code, _, err) = call(&args);
+        assert_eq!(code, 0, "{err}");
+        let text = std::fs::read_to_string(&lst).unwrap();
+        assert!(
+            text.starts_with(
+                "                            ORG 0C000H\nC000  3E 11         START:  MVI A,11H\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\nСИМВОЛЫ (1)\n"));
+    }
+    std::fs::write(&src, "  JMP NOWHERE\n").unwrap();
+    let lst = d.p("bad.lst");
+    let (code, _, _) = call(&["-f", s(&src), "-o", s(&d.p("bad.hex")), "-l", s(&lst)]);
+    assert_eq!(code, 1);
+    assert!(!lst.exists());
+    assert!(!d.p("bad.hex").exists());
 }

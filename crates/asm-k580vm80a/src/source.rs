@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::error::{AsmError, AsmResult, Loc};
 use crate::expr::Value;
+use crate::lexer::Word;
 
 /// Одна строка исходного текста с её происхождением.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +28,30 @@ pub struct SourceLine {
     pub notes: Vec<String>,
     /// Строка получена раскрытием макроса или REPT (для листинга).
     pub expanded: bool,
+    /// Глубина включения INCLUDE: 0 — основной файл (для листинга).
+    pub include_depth: usize,
+    /// Что ассемблеру делать со строкой.
+    pub kind: LineKind,
+}
+
+/// Что ассемблеру делать со строкой, полученной от источника.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum LineKind {
+    /// Обычная строка: ассемблер её собирает.
+    #[default]
+    Code,
+    /// Строку уже выполнил препроцессор (директива INCLUDE/IF/MACRO/REPT…, строка тела
+    /// определяемого макроса, вызов макроса). Ассемблер только определяет метку `label`
+    /// (если есть) и показывает строку в листинге без кодов.
+    Preprocessed {
+        /// Метка в начале строки (например, `L: REPT 3` или `L: MYMACRO 1`).
+        label: Option<Word>,
+    },
+    /// Строка ложной ветки IF: не собирается, в листинге — без кодов, с пометкой.
+    Skipped,
+    /// Ошибка препроцессора в этой строке: ассемблер добавляет её к ошибкам прохода
+    /// (вместе с примечаниями строки).
+    Error(Box<AsmError>),
 }
 
 impl SourceLine {
@@ -38,6 +63,8 @@ impl SourceLine {
             text: text.into(),
             notes: Vec::new(),
             expanded: false,
+            include_depth: 0,
+            kind: LineKind::Code,
         }
     }
 

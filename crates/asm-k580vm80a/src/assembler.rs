@@ -13,7 +13,7 @@ use crate::expr::{self, Lookup, Part, RelocTarget, Symbols, Value};
 use crate::ir::{Chunk, Extern, Module, Public, Reloc, SegKind, Symbol, SymbolKind};
 use crate::lexer::{self, ParsedLine, Tok, Token, Word};
 use crate::opcodes::{self, Form};
-use crate::source::{LineSource, Pass, PassContext, SourceLine, SourceProvider};
+use crate::source::{LineKind, LineSource, Pass, PassContext, SourceLine, SourceProvider};
 
 /// Директивы, которые выполняет сам ассемблер.
 pub const DIRECTIVES: &[&str] = &[
@@ -49,6 +49,9 @@ pub struct LineRecord {
     pub bytes: Vec<u8>,
     /// Значение символа для EQU/SET (в листинге вместо адреса).
     pub value: Option<Value>,
+    /// Адрес, который показать в листинге у строки без кодов: адрес метки этой строки или
+    /// начало резерва DS (сегмент и смещение).
+    pub addr: Option<(SegKind, u32)>,
 }
 
 /// Результат сборки.
@@ -112,6 +115,7 @@ pub struct Assembler<'o> {
     lines: Vec<LineRecord>,
     cur_bytes: Vec<u8>,
     cur_value: Option<Value>,
+    cur_addr: Option<(SegKind, u32)>,
     ended: bool,
 }
 
@@ -176,6 +180,7 @@ impl<'o> Assembler<'o> {
             lines: Vec::new(),
             cur_bytes: Vec::new(),
             cur_value: None,
+            cur_addr: None,
             ended: false,
         })
     }
@@ -222,7 +227,14 @@ impl<'o> Assembler<'o> {
         self.line_start = start;
         self.cur_bytes.clear();
         self.cur_value = None;
-        if let Err(mut e) = self.process_inner(&line) {
+        self.cur_addr = None;
+        let res = match &line.kind {
+            LineKind::Code => self.process_inner(&line),
+            LineKind::Preprocessed { label: Some(l) } => self.define_label(l, &line),
+            LineKind::Preprocessed { label: None } | LineKind::Skipped => Ok(()),
+            LineKind::Error(e) => Err((**e).clone()),
+        };
+        if let Err(mut e) = res {
             e.notes.extend(line.notes.iter().cloned());
             self.errors.push(e);
         }
@@ -237,6 +249,7 @@ impl<'o> Assembler<'o> {
                 offset: start,
                 bytes: std::mem::take(&mut self.cur_bytes),
                 value: self.cur_value.take(),
+                addr: self.cur_addr.take(),
             });
         }
     }
@@ -368,7 +381,9 @@ impl<'o> Assembler<'o> {
             }
             _ if PREPROCESSOR_DIRECTIVES.contains(&up.as_str()) => Err(AsmError::at(
                 &oploc,
-                format!("директива {up} выполняется препроцессором, а он ещё не подключён"),
+                format!(
+                    "директива {up} выполняется препроцессором, а он не подключён к этому источнику строк"
+                ),
             )),
             _ => Err(AsmError::at(
                 &oploc,
@@ -380,7 +395,9 @@ impl<'o> Assembler<'o> {
     // ---------- символы ----------
 
     fn define_label(&mut self, l: &Word, line: &SourceLine) -> AsmResult<()> {
-        let v = Value::in_segment(self.seg, i64::from(self.pc[self.seg.index()]));
+        let pc = self.pc[self.seg.index()];
+        self.cur_addr = Some((self.seg, pc));
+        let v = Value::in_segment(self.seg, i64::from(pc));
         self.define(l, Some(v), SymbolKind::Label, line)
     }
 
@@ -856,6 +873,9 @@ impl<'o> Assembler<'o> {
             }
             None => {
                 let i = self.seg.index();
+                if self.cur_addr.is_none() {
+                    self.cur_addr = Some((self.seg, self.pc[i]));
+                }
                 if self.pc[i] + n as u32 > 0x10000 {
                     return Err(AsmError::at(
                         &loc,
