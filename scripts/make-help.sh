@@ -5,5 +5,5 @@ cd "$(dirname "$0")/.."
 
 awk '
     /^## / { desc = substr($0, 4); next }
-    /^[a-z-]+:/ && desc != "" { split($0, a, ":"); printf "  make %-10s — %s\n", a[1], desc; desc = "" }
+    /^[a-z-]+:/ && desc != "" { split($0, a, ":"); printf "  make %-12s — %s\n", a[1], desc; desc = "" }
 ' Makefile

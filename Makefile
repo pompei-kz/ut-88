@@ -1,9 +1,11 @@
 # Эмулятор ЮТ-88. Справка: make help
 
 BIN := target/release/ut88
+ASM := target/release/asm-k580vm80a
+LINK := target/release/link-k580vm80a
 
 .PHONY: compile help base base-t full full-t tetris tetris-t cpm cpm-t os os-t \
-        prog prog-t programs test test-all lint fmt align-md clean
+        prog prog-t programs asm asm-run link asm-examples test test-all lint fmt align-md clean
 
 ## Собрать бинарники (по умолчанию)
 compile:
@@ -64,6 +66,22 @@ prog-t: compile
 ## Список программ из programs/
 programs:
 	@scripts/run-program.sh --list
+
+## Собрать программу на ассемблере: make asm F=файл.asm [O=файл.hex]
+asm: compile
+	$(ASM) -f $(F) -o $(or $(O),$(F:.asm=.hex))
+
+## Собрать и запустить в эмуляторе: make asm-run F=файл.asm [C=minimal|full]
+asm-run: compile
+	scripts/asm-run.sh $(F) $(C)
+
+## Скомпоновать модули: make link O=файл.hex M="a.link b.link" [B=адрес]
+link: compile
+	$(LINK) $(M) -o $(O) -m $(basename $(O)).map $(if $(B),--base $(B))
+
+## Собрать все примеры из examples/asm/
+asm-examples: compile
+	scripts/asm-examples.sh
 
 ## Тесты
 test:

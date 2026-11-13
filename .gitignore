@@ -2,3 +2,7 @@
 /ut88-disk.img
 /ut88-quick.snap
 /resume
+/examples/asm/**/*.hex
+/examples/asm/**/*.link
+/examples/asm/**/*.map
+/examples/asm/**/*.lst
