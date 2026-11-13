@@ -3,7 +3,7 @@
 BIN := target/release/ut88
 
 .PHONY: compile help base base-t full full-t tetris tetris-t cpm cpm-t os os-t \
-        prog prog-t programs test test-all lint fmt clean
+        prog prog-t programs test test-all lint fmt align-md clean
 
 ## Собрать бинарники (по умолчанию)
 compile:
@@ -82,6 +82,11 @@ lint:
 ## Отформатировать код
 fmt:
 	cargo fmt
+
+## Выровнять таблицы во всех .md
+align-md:
+	git ls-files '*.md' | grep -v '^CLAUDE.md$$' | xargs scripts/align-md.py
+	scripts/align-md.py --code CLAUDE.md
 
 ## Удалить результаты сборки
 clean:
