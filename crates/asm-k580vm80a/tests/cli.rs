@@ -92,7 +92,7 @@ fn type_option_overrides_extension() {
             .starts_with(":05C000")
     );
 
-    // Неизвестное расширение без -t, неизвестный -t, link — ошибка, файла нет.
+    // Неизвестное расширение без -t, неизвестный -t — ошибка, файла нет.
     let out = d.p("p.out");
     let (code, _, err) = call(&["-f", s(&src), "-o", s(&out)]);
     assert_eq!(code, 2);
@@ -101,10 +101,19 @@ fn type_option_overrides_extension() {
     let (code, _, err) = call(&["-f", s(&src), "-o", s(&out), "-t", "elf"]);
     assert_eq!(code, 2);
     assert!(err.contains("неизвестный тип выхода «elf»"), "{err}");
+    assert!(!out.exists());
+
+    // .link и -t link — объектный файл.
     let (code, _, err) = call(&["-f", s(&src), "-o", s(&d.p("p.link"))]);
-    assert_eq!(code, 2);
-    assert!(err.contains("link"), "{err}");
-    assert!(!out.exists() && !d.p("p.link").exists());
+    assert_eq!(code, 0, "{err}");
+    let obj = std::fs::read_to_string(d.p("p.link")).unwrap();
+    assert!(
+        obj.starts_with("UT88LINK 1\n") && obj.ends_with("ENTRY ASEG C000\nEND\n"),
+        "{obj}"
+    );
+    let (code, _, err) = call(&["-f", s(&src), "-o", s(&d.p("p.o")), "-t", "link"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(std::fs::read_to_string(d.p("p.o")).unwrap(), obj);
 }
 
 #[test]

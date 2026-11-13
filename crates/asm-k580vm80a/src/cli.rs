@@ -23,7 +23,7 @@ pub const HELP_EN: &str = include_str!("help_en.txt");
 pub const HINT: &str = "\
 asm-k580vm80a — ассемблер КР580ВМ80А (Intel 8080) для ЮТ-88
 
-Использование: asm-k580vm80a -f ВХОД.asm -o ВЫХОД.hex|.bin|.ihx [-t bin|hex|ihex] [ключи]
+Использование: asm-k580vm80a -f ВХОД.asm -o ВЫХОД.hex|.bin|.ihx|.link [-t ТИП] [ключи]
 
   asm-k580vm80a -h     подробная справка на русском
   asm-k580vm80a -he    detailed help in English
@@ -61,7 +61,7 @@ fn command() -> Command {
         .arg(Arg::new("base").long("base").num_args(1))
 }
 
-fn clap_error_ru(e: &clap::Error) -> String {
+pub(crate) fn clap_error_ru(e: &clap::Error) -> String {
     let arg = match e.get(ContextKind::InvalidArg) {
         Some(ContextValue::String(s)) => s.clone(),
         _ => String::new(),
@@ -217,10 +217,11 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         }
     }
-    if format == Format::Link {
+    if format == Format::Link && m.get_one::<String>("base").is_some() {
         return usage_err(
             err,
-            "тип выхода link (объектный файл .link) пока не реализован",
+            "--base не применяется к объектному файлу .link: адреса сегментов задаёт \
+             компоновщик (link-k580vm80a --cseg/--dseg)",
         );
     }
 
@@ -228,15 +229,19 @@ pub fn run(args: &[OsString], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         Ok(a) => a,
         Err(errors) => return report(err, &errors),
     };
-    let img = match asm.to_image(&placement) {
-        Ok(i) => i,
-        Err(errors) => return report(err, &errors),
-    };
-    let data = match format {
-        Format::Bin => img.to_bin(fill),
-        Format::Hex => img.to_dump().into_bytes(),
-        Format::Ihex => img.to_ihex().into_bytes(),
-        Format::Link => unreachable!("проверено выше"),
+    let data = if format == Format::Link {
+        crate::object::write(&asm.module).into_bytes()
+    } else {
+        let img = match asm.to_image(&placement) {
+            Ok(i) => i,
+            Err(errors) => return report(err, &errors),
+        };
+        match format {
+            Format::Bin => img.to_bin(fill),
+            Format::Hex => img.to_dump().into_bytes(),
+            Format::Ihex => img.to_ihex().into_bytes(),
+            Format::Link => unreachable!("обработано выше"),
+        }
     };
     if let Some(lst) = m.get_one::<String>("listing")
         && let Err(e) = std::fs::write(lst, asm.listing())

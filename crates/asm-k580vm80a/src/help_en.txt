@@ -18,6 +18,7 @@ OPTIONS
                  -o file name does not matter.
                    asm-k580vm80a -f hello.asm -o hello.txt -t hex
                    asm-k580vm80a -f rom.asm -o rom.img -t bin
+                   asm-k580vm80a -f main.asm -o main.obj -t link
   -l FILE        listing: address, codes, source line, symbol table (see LISTING).
                    asm-k580vm80a -f prog.asm -o prog.hex -l prog.lst
   -D NAME[=VAL]  define a symbol, like EQU at the top of the source. Without a value
@@ -35,6 +36,7 @@ OPTIONS
   --base ADDR    start address of the CSEG segment when assembling directly to
                  bin/hex/ihex (hexadecimal, default 0000); DSEG follows CSEG.
                    asm-k580vm80a -f prog.asm -o prog.hex --base C000
+                 Not allowed with -t link: the linker places the segments.
   -h, -he, -V    help in Russian, in English, version.
 
   Running without arguments prints a short hint.
@@ -47,7 +49,7 @@ CHOOSING THE OUTPUT FORMAT
     .bin, .rom     bin  — flat memory image
     .hex           hex  — dump as printed in the magazine «ЮТ для умелых рук»
     .ihx, .ihex    ihex — Intel HEX
-    .link          link — object file for the linker (in development)
+    .link          link — object file for the linker link-k580vm80a
 
   Any other extension without -t is an error. -t always wins over the extension:
     -o prog.bin -t hex   writes a text dump into prog.bin.
@@ -69,6 +71,8 @@ OUTPUT FILE FORMATS
           :09C000003E112100C0EFC306C08F
           :040000030000C00039      (start address C000H)
           :00000001FF
+  link  object file (relocatable module) for the linker link-k580vm80a, see
+        OBJECT FILES AND LINKING.
 
 LISTING (-l)
 
@@ -211,7 +215,7 @@ DIRECTIVES
   EXTRN name,...         symbols from other modules (synonym EXTERN). When
                          assembling directly to bin/hex/ihex a reference to an EXTRN
                          symbol is an error: such programs are assembled to .link
-                         files and linked.
+                         files and linked (see OBJECT FILES AND LINKING).
 
 PREPROCESSOR
 
@@ -296,6 +300,45 @@ PREPROCESSOR
     prog.asm:3:15: ошибка: неизвестный символ X
         примечание: из макроса DELAY, вызванного в prog.asm:12
   Unclosed IF, MACRO and REPT are errors («IF без ENDIF», «MACRO без ENDM»).
+
+OBJECT FILES AND LINKING
+
+  A program can be split into modules: each one is assembled separately into a
+  .link object file (-t link or the .link extension), then the linker
+  link-k580vm80a combines the modules into bin/hex/ihex. Modules share symbols
+  through PUBLIC (export) and EXTRN (import); code goes to CSEG, data to DSEG,
+  absolute parts to ASEG (by ORG). When assembling to .link EXTRN symbols are
+  allowed: a reference to an external symbol (± a number, HIGH, LOW) is recorded
+  as a relocation.
+
+  The object file is plain text and can be read:
+
+    UT88LINK 1
+    MODULE MAIN
+    SEGMENT CSEG 0009
+    DATA CSEG 0000 21 00 00 CD 00 00 C3 6C F8
+    SEGMENT DSEG 0007
+    DATA DSEG 0000 70 72 69 77 65 74 00
+    EXTERN PRINT AT main.asm:2:17
+    PUBLIC START CSEG 0000 AT main.asm:3:17
+    RELOC CSEG 0001 WORD DSEG +0000 AT main.asm:5:19
+    RELOC CSEG 0004 WORD EXT PRINT +0000 AT main.asm:6:17
+    ENTRY CSEG 0000
+    END
+
+  The first line is the signature and the format version, END ends the file.
+  SEGMENT — a segment and its size, DATA — bytes at an offset, EXTERN/PUBLIC —
+  import and export, RELOC — a relocation (where, kind WORD/LOW/HIGH, target
+  CSEG/DSEG/EXT name, constant), ENTRY — start address from END, AT — place in the
+  source text. Details: link-k580vm80a -he.
+
+    asm-k580vm80a -f main.asm -o main.link
+    asm-k580vm80a -f print.asm -o print.link
+    link-k580vm80a main.link print.link -o hello.hex -m hello.map --base 3000
+
+  The linker places the CSEGs of all modules back to back from --base (default
+  C000H), then the DSEGs of all modules, ASEGs at their own addresses, and writes
+  a .map file with segment and symbol addresses.
 
 STRING ENCODING
 

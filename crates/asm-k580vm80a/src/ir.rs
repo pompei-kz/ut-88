@@ -111,6 +111,16 @@ pub struct Reloc {
 }
 
 impl Reloc {
+    /// Ошибка в месте перемещения: строка исходника, если известна, иначе сегмент и
+    /// смещение (в примечании).
+    pub fn error(&self, msg: impl Into<String>) -> AsmError {
+        let place = || format!("место: {} смещение {:04X}H", self.seg.name(), self.offset);
+        match &self.loc {
+            Some(l) => AsmError::at(l, msg),
+            None => AsmError::plain(msg).note(place()),
+        }
+    }
+
     /// Сколько байт исправляется.
     pub fn width(&self) -> u16 {
         if self.part == Part::Word { 2 } else { 1 }
@@ -286,13 +296,26 @@ impl Module {
                     "{module}внешний символ {name} не определён (при сборке в bin/hex/ihex EXTRN \
                      недопустим: соберите объектные файлы -t link и скомпонуйте link-k580vm80a)"
                 );
-                errors.push(match &r.loc {
-                    Some(l) => AsmError::at(l, msg),
-                    None => AsmError::plain(msg),
-                });
+                errors.push(r.error(msg));
                 continue;
             };
-            let v = r.part.apply(target + r.addend);
+            let full = target + r.addend;
+            if r.part != Part::Word && !(0..=0xFFFF).contains(&full) {
+                let what = match &r.target {
+                    RelocTarget::Extern(n) => n.clone(),
+                    RelocTarget::Segment(k) => format!("{} модуля", k.name()),
+                };
+                errors.push(r.error(format!(
+                    "{module}переполнение: {} от адреса {} ({what} {}{}) — адрес вне \
+                     0000H–FFFFH, байт неоднозначен",
+                    r.part.name(),
+                    fmt_signed(full),
+                    if r.addend < 0 { "" } else { "+" },
+                    fmt_signed(r.addend)
+                )));
+                continue;
+            }
+            let v = r.part.apply(full);
             let at = bases[r.seg.index()] + i64::from(r.offset);
             let bytes = match r.part {
                 Part::Word => vec![(v & 0xFF) as u8, (v >> 8) as u8],
@@ -319,5 +342,13 @@ pub fn resolve_value(
             };
             Some(v.resolve(base))
         }
+    }
+}
+
+fn fmt_signed(a: i64) -> String {
+    if a < 0 {
+        format!("-{:X}H", a.unsigned_abs())
+    } else {
+        format!("{a:04X}H")
     }
 }

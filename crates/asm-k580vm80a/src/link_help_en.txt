@@ -1,0 +1,190 @@
+link-k580vm80a — linker of .link object files of the КР580ВМ80А assembler for UT-88
+
+USAGE
+
+  link-k580vm80a MODULE.link... -o OUTPUT [-t bin|hex|ihex] [-m MAP.map]
+                 [--base ADDRESS] [--cseg ADDRESS] [--dseg ADDRESS] [-e SYMBOL] [--fill XX]
+  link-k580vm80a -h      detailed help in Russian
+  link-k580vm80a -he     this help (in English)
+  link-k580vm80a -V      version
+
+  The linker builds a program from several modules assembled by asm-k580vm80a into
+  object files (-t link or the .link extension): it lays the module segments out in
+  memory, binds PUBLIC and EXTRN symbols, fixes up addresses (relocations) and
+  writes the final memory image as bin, hex or ihex — the same formats the
+  assembler writes.
+
+OPTIONS
+
+  MODULE.link    object files (at least one), in layout order.
+                   link-k580vm80a main.link print.link -o hello.hex
+  -o FILE        output file (required). Not created if there are errors.
+  -t TYPE        output type: bin, hex, ihex. Without -t it is taken from the -o
+                 extension: .bin, .rom — bin; .hex — magazine-style dump; .ihx,
+                 .ihex — Intel HEX. Merging modules into one .link is not supported.
+                   link-k580vm80a main.link print.link -o hello.txt -t ihex
+  -m FILE        link map (see .map FILE).
+                   link-k580vm80a main.link print.link -o hello.hex -m hello.map
+  --base ADDR    program start: the CSEG address of the first module (hexadecimal).
+                 Default C000 — the start of the UT-88 user RAM.
+                   link-k580vm80a main.link print.link -o hello.bin --base 3000
+  --cseg ADDR    same as --base (when both are given, --cseg wins).
+  --dseg ADDR    DSEG address of the first module. By default data follows the code
+                 of all modules.
+                   link-k580vm80a main.link print.link -o hello.hex --dseg D000
+  -e SYMBOL      start address — the value of a PUBLIC symbol (record 03 in Intel
+                 HEX). Without -e the start address comes from END address, which
+                 must appear in at most one module.
+                   link-k580vm80a main.link print.link -o hello.ihx -e START
+  --fill XX      filler byte for gaps in bin output (hexadecimal, default 00).
+                   link-k580vm80a main.link print.link -o hello.bin --fill FF
+  -h, -he, -V    help in Russian, in English, version.
+
+  Numbers in options are hexadecimal: C000, 0C000H, 0xC000, $C000.
+  Running without arguments prints a short hint.
+  Exit code: 0 — success, 1 — errors in modules or while linking, 2 — command line
+  error.
+
+MEMORY LAYOUT
+
+  * The CSEGs of all modules are placed back to back, in command line order,
+    starting at --cseg/--base (C000H).
+  * The DSEGs of all modules follow in the same order, starting at --dseg or right
+    after the code of the last module.
+  * ASEG (absolute parts, addresses set by ORG) stay at their addresses.
+  * A segment size includes DS reservations; there is no alignment.
+  * Overlapping areas of two modules (or with an ASEG) are an error, so is going
+    past FFFFH.
+
+  Modules main (CSEG 9 bytes, DSEG 7 bytes) and print (CSEG 11 bytes) with
+  --base 3000:
+    main  CSEG 3000H–3008H,  print CSEG 3009H–3013H,  main DSEG 3014H–301AH.
+
+  The assembler lays segments out the same way when it assembles one file directly
+  to bin/hex/ihex: a program split into modules and linked with --base X is
+  byte-for-byte equal to the same text assembled as one file (CSEG parts in order,
+  then DSEG parts) with asm-k580vm80a --base X.
+
+SYMBOLS AND RELOCATIONS
+
+  * An EXTRN symbol must be declared PUBLIC in exactly one module; names are
+    case-insensitive (as in the assembler). A PUBLIC symbol may be a CSEG/DSEG
+    label, an absolute value (EQU) or "external symbol ± constant".
+  * There are three relocation kinds: WORD (whole address, 2 bytes), LOW and HIGH
+    (low and high byte of an address). The target is the start of the module's own
+    CSEG/DSEG or an external symbol, plus a constant:
+      LXI   H,MSG+2           ; WORD DSEG +0002
+      CALL  PRINT             ; WORD EXT PRINT +0000
+      MVI   A,HIGH (BUF+10H)  ; HIGH EXT BUF +0010
+  * For LOW and HIGH the target address plus the constant must lie in 0000H–FFFFH,
+    otherwise the byte is ambiguous — an "overflow" error. WORD is taken modulo
+    10000H.
+
+ERROR MESSAGES
+
+  Errors in an object file give the position in it (file:line:column):
+    main.link:1:10: ошибка: неподдерживаемая версия формата .link «2» (поддерживается 1)
+    main.link:14:1: ошибка: файл обрезан: нет завершающей строки END
+  Link errors name the module, the file and the place in the source text:
+    ошибка: модуль MAIN (main.link): внешний символ PRINT не найден ни в одном
+      модуле (нет PUBLIC PRINT); EXTRN в main.asm:2:17
+        примечание: используется: CSEG смещение 0004H, main.asm:6:17
+    ошибка: символ PRINT определён повторно: модуль PRINT (print.link),
+      print.asm:2:17 и модуль PRINT2 (print2.link), print2.asm:3:17
+    ошибка: перекрытие областей памяти: модуль A (a.link) ASEG (F000H–F00FH) и
+      модуль B (b.link) CSEG (F008H–F01FH)
+    main.asm:7:17: ошибка: модуль MAIN: переполнение: HIGH от адреса 10010H ...
+  (messages are in Russian). Other errors: END address in several modules (without
+  -e), -e with an unknown symbol, running past the address space. The output file
+  and the map are not created when there are errors.
+
+.map FILE (-m)
+
+  КАРТА КОМПОНОВКИ link-k580vm80a
+
+  СЕГМЕНТЫ МОДУЛЕЙ
+
+    Модуль  Файл        Сегмент  Начало  Конец  Размер
+    MAIN    main.link   CSEG     3000H   3008H  0009H
+    MAIN    main.link   DSEG     3014H   301AH  0007H
+    PRINT   print.link  CSEG     3009H   3013H  000BH
+
+  СИМВОЛЫ PUBLIC ПО ИМЕНИ
+
+    Символ  Значение  Сегмент  Модуль
+    PRINT   3009H     CSEG     PRINT
+    START   3000H     CSEG     MAIN
+
+  СИМВОЛЫ PUBLIC ПО АДРЕСУ
+
+    Символ  Значение  Сегмент  Модуль
+    START   3000H     CSEG     MAIN
+    PRINT   3009H     CSEG     PRINT
+
+  АДРЕС ПУСКА: 3000H (END в модуле MAIN)
+
+  The map is in Russian: module segments (with start, end and size), all PUBLIC
+  symbols sorted by name and by address, and the start address. Segments are
+  listed per module in file order (ASEG — each contiguous data block on its own
+  line); the symbol segment ASEG means an absolute value, EXT — external symbol ±
+  constant. The module name comes from NAME, without NAME — the file name without
+  the extension.
+
+.link OBJECT FILE
+
+  Text, line by line; written by asm-k580vm80a -t link. The first line is UT88LINK
+  and the format version, the last one is END; lines starting with ";" are
+  comments. Numbers are hexadecimal, offsets are relative to the segment start.
+
+    UT88LINK 1
+    MODULE MAIN                                 module name from NAME (if any)
+    SEGMENT CSEG 0009                           segment and size (with DS)
+    DATA CSEG 0000 21 00 00 CD 00 00 C3 6C F8   bytes at the given offset
+    SEGMENT DSEG 0007
+    DATA DSEG 0000 70 72 69 77 65 74 00
+    EXTERN PRINT AT main.asm:2:17               import
+    PUBLIC START CSEG 0000 AT main.asm:3:17     export: segment and offset
+    RELOC CSEG 0001 WORD DSEG +0000 AT main.asm:5:19
+    RELOC CSEG 0004 WORD EXT PRINT +0000 AT main.asm:6:17
+    ENTRY CSEG 0000                             start address from END
+    END
+
+  RELOC: where (segment, offset), kind (WORD, LOW, HIGH), target (CSEG, DSEG or
+  EXT name), a signed constant. PUBLIC with segment ASEG is an absolute value,
+  PUBLIC name EXT other ±n is a value based on an external symbol. AT
+  file:line:column is the place in the source text, for messages. The data at a
+  relocation holds the value for base 0.
+
+EXAMPLE
+
+  main.asm:
+          NAME    MAIN
+          EXTRN   PRINT
+          PUBLIC  START
+          CSEG
+  START:  LXI     H,MSG
+          CALL    PRINT
+          JMP     0F86CH          ; return to the MONITOR
+          DSEG
+  MSG:    DB      'ПРИВЕТ',0
+          END     START
+
+  print.asm:
+          NAME    PRINT
+          PUBLIC  PRINT
+          CSEG
+  PRINT:  MOV     A,M             ; HL — string address, 0 — end
+          ORA     A
+          RZ
+          MOV     C,A
+          CALL    0F809H          ; print the character in C
+          INX     H
+          JMP     PRINT
+
+    asm-k580vm80a -f main.asm -o main.link
+    asm-k580vm80a -f print.asm -o print.link
+    link-k580vm80a main.link print.link -o hello.hex -m hello.map --base 3000
+
+  hello.hex:
+    3000 21 14 30 CD 09 30 C3 6C F8 7E B7 C8 4F CD 09 F8
+    3010 23 C3 09 30 70 72 69 77 65 74 00

@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "asm-k580vm80a"
 path = "src/bin/asm.rs"
 
+[[bin]]
+name = "link-k580vm80a"
+path = "src/bin/link.rs"
+
 [dependencies]
 clap = "4"
 

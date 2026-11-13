@@ -5,7 +5,11 @@
 //! [`lexer`] (метка, мнемоника, операнды) → [`expr`] (выражения со значениями с признаком
 //! перемещаемости) → [`assembler`] (два прохода, команды из [`opcodes`], директивы) →
 //! [`ir`] (модуль: сегменты + перемещения + символы) → [`output`] (bin, дамп журнала,
-//! Intel HEX) и [`listing`] (листинг).
+//! Intel HEX), [`object`] (объектный файл `.link`) и [`listing`] (листинг).
+//!
+//! Компоновщик [`linker`] (CLI — [`link_cli`], бинарник `link-k580vm80a`) читает
+//! объектные файлы, раскладывает сегменты модулей, сводит PUBLIC/EXTRN и применяет
+//! перемещения тем же [`ir::Module::place`], что и ассемблер.
 //!
 //! ```
 //! use asm_k580vm80a::{assemble, Options, ir::Placement};
@@ -21,7 +25,10 @@ pub mod error;
 pub mod expr;
 pub mod ir;
 pub mod lexer;
+pub mod link_cli;
+pub mod linker;
 pub mod listing;
+pub mod object;
 pub mod opcodes;
 pub mod output;
 pub mod preprocess;
