@@ -231,3 +231,45 @@ fn hello_link_runs_on_monitor_f() {
         .unwrap_or_else(|| panic!("нет строки на экране:\n{text}"));
     assert_eq!(lines[i + 1], "ПРИВЕТ ИЗ ДВУХ МОДУЛЕЙ!");
 }
+
+#[test]
+fn draw_paints_screen() {
+    let img = build(&example("draw.asm"));
+    assert_eq!(img.entry, Some(0x3000));
+    let mut m = Machine::new(Config::full());
+    m.run_seconds(0.5);
+    load(&mut m, &img);
+    m.jump(0x3000);
+    // Программа рисует и ждёт клавишу в F803H.
+    m.run_seconds(0.5);
+    let s = m.screen().expect("нет дисплейного модуля");
+    let row = |r: usize| s.line(r).trim_end().to_string();
+    // Рамка с уголками «+».
+    assert_eq!(row(0), format!("+{}+", "*".repeat(62)));
+    assert_eq!(row(25), format!("+{}+", "*".repeat(62)));
+    for r in 1..25 {
+        let line: Vec<char> = s.line(r).chars().collect();
+        assert_eq!(
+            (line[0], line[63]),
+            ('*', '*'),
+            "боковые стороны рамки, строка {r}"
+        );
+    }
+    // Диагонали вне прямоугольника.
+    assert_eq!(s.line(1).chars().nth(8), Some('\\'));
+    assert_eq!(s.line(1).chars().nth(55), Some('/'));
+    assert_eq!(s.line(24).chars().nth(54), Some('\\'));
+    assert_eq!(s.line(24).chars().nth(9), Some('/'));
+    // Инверсный прямоугольник: строки 10–14, знакоместа 23–39 (бит 7 в ячейках 24–40).
+    for r in 10..15 {
+        for c in 0..64 {
+            assert_eq!(
+                s.inverse[r * 64 + c],
+                (23..=39).contains(&c),
+                "инверсия {r}:{c}"
+            );
+        }
+    }
+    // Надпись.
+    assert!(row(20).contains("ЮТ-88 РИСУЕТ!"), "{}", row(20));
+}
