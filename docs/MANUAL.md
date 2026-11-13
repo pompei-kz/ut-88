@@ -382,6 +382,13 @@ Speeds for F5 / Shift+F5 (and in the «Машина → Скорость» menu)
 ×8, ×16, maximum — `--speed` accepts the same series. F10 closes the window immediately,
 without asking: save a snapshot (F6) before exiting if you need the state.
 
+At "maximum" the window gives most of each of its frames to emulation and still refreshes
+at the PC display rate (≈ 60 frames per second); sound is neither played nor collected,
+and when you return to ×1 it restarts from the current moment — without clicks or stale
+leftovers. The display screen and the indicators are redrawn only when they change. While
+debugger breakpoints are set or a key is held, the machine runs in small portions (as at
+×1), which is slower.
+
 ### Mouse
 
 - Clicking a drawn key presses it for at least 0.3 s (longer while you hold the mouse
@@ -426,6 +433,12 @@ The same as in the window — see the table in section 3 ("Hotkeys"): F2 — «�
 F3 — cold start, F4 — pause, F5 / Shift+F5 — speed, F6 / F7 — quick snapshot, F8 — tape
 recorder, F9 — programs, F10 — exit, F11 — menu and help, F12 — debugger. F1 is not used.
 Speeds: ×0.25, ×0.5, ×1, ×2, ×4, ×8, ×16, maximum.
+
+At "maximum" the terminal is redrawn at most ≈ 30 times per second and only when
+something changed (screen, indicators, pressed key, a window); the cycle counter and the
+actual speed in the status line are updated ≈ 4 times per second. While debugger
+breakpoints are set or a key is pressed (or waiting in the queue), the machine runs
+instruction by instruction — exactly as at ×1, but slower.
 
 Many terminals (GNOME Terminal, Konsole, xfce4-terminal) take F11 for themselves — it
 toggles full-screen mode, and the key never reaches the emulator. In that case open the
