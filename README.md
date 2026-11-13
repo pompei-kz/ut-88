@@ -19,6 +19,57 @@ window (egui) or in a terminal (ratatui).
 | **Tetris** (`make tetris`)                      | **CP/M 2.2** (`make cpm`)                |
 | ![Tetris](docs/img/tetris.png)                  | ![CP/M-64 boot screen](docs/img/cpm.png) |
 
+## Features
+
+**The machine**
+
+- **КР580ВМ80А (Intel 8080) CPU** — all 256 opcodes including the undocumented ones,
+  exact flags and cycle counts; passes the classic 8080 test suites (TST8080, 8080PRE,
+  CPUTEST and the 8080 instruction exerciser 8080EXM).
+- **Three configurations** of the real computer:
+  - **basic** — the processor module: 1 KB RAM, six seven-segment LEDs, 16-key keypad
+    with STEP BACK and RESET, the original 1 KB MONITOR ROM;
+  - **full** — plus the display module (64×28 text screen, full keyboard with
+    РУС/УС/СС, MONITOR-F ROM, character generator) and the 64 KB RAM module;
+  - **CP/M** — plus the 64–256 KB RAM disk («квазидиск») on port 40H.
+- **Original timing:** 16 MHz / 9 ≈ 1.78 MHz CPU clock, the 1 Hz real-time clock
+  interrupt (RST 7) of the К176ИЕ5 chip.
+- **Cassette tape:** writing and reading WAV files with the real two-phase signal of
+  both MONITORs (compatible with «Микро-80» / «Радио-86РК» recordings), plus instant
+  loading and saving of memory blocks.
+- **Sound** of the tape output through the sound card (key clicks, «Гамма»,
+  «Лабиринт»), stretched correctly at slow speeds.
+- **Software from the magazine, ready to run:** both MONITORs, the «Тетрис»,
+  «Гамма», «Крестики-нолики», «Лабиринт», «Реакция» programs, a ROM programmer, the
+  floating-point calculator ROM, **CP/M 2.2** (the CP/M-64 and CP/M-35 versions) and the
+  **UT-88 OS** (editor, assembler, debugger) — all typed in from the magazine pages and
+  checked against the printed checksums.
+
+**The emulator**
+
+- **Two front ends on one core:** a window that looks like the real computer
+  (beige case, red LEDs, TV set, keyboard laid out as in the magazine) and a full
+  terminal interface.
+- **Speed control:** ×0.25 … ×16 and «as fast as possible», pause, reset (F2) and
+  cold start.
+- **Debugger:** registers and flags, disassembler, memory dump and editing,
+  breakpoints on addresses and I/O ports, step and step over.
+- **Snapshots** of the whole machine state (quick save/load on F6/F7).
+- **Program loading** from `.bin`, Intel HEX and magazine-style hex dumps; putting
+  host files onto the CP/M disk; saving the RAM disk image between runs.
+- **Mouse and keyboard:** every action is available both from F-keys and from the
+  on-screen button bar.
+
+**Tools**
+
+- **Cross-assembler `asm-k580vm80a`:** Intel mnemonics, expressions, macros, INCLUDE,
+  conditional assembly, listings; output as a flat binary, the magazine hex dump,
+  Intel HEX or relocatable `.link` object modules; detailed help in Russian (`-h`) and
+  English (`-he`).
+- **Linker `link-k580vm80a`:** links `.link` modules into a program with a memory map.
+- **Documentation:** the full magazine articles translated into Markdown (Russian), a
+  user manual in English and Russian, assembler guides, ready-made examples.
+
 ## Requirements
 
 - **Rust toolchain with `cargo`** (Rust 1.89 or newer). Install it with
@@ -55,27 +106,21 @@ cd ut-88
 make base
 ```
 
-| Command                   | What it does                                                                               |
-|---------------------------|--------------------------------------------------------------------------------------------|
-| `make` / `make compile`   | build the binaries (`target/release/ut88`)                                                 |
-| `make help`               | list all commands                                                                          |
-| `make base`               | basic computer: processor module (module 1) with LED display and keypad                    |
-| `make full`               | full computer: display module, MONITOR-F, 64 KB RAM                                        |
-| `make tetris`             | the Tetris game from the magazine (full configuration)                                     |
-| `make cpm`                | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                        |
-| `make os`                 | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                    |
-| `make prog P=NAME`        | a program from `programs/`, e.g. `make prog P=gamma`                                       |
-| `make programs`           | list the programs in `programs/`                                                           |
-| `make asm F=FILE.asm`     | assemble a program (КР580ВМ80А assembly) into `FILE.hex`; `O=` sets the output             |
-| `make asm-run F=FILE.asm` | assemble and run it in the emulator (`C=minimal\|full` sets the configuration)             |
-| `make link O=OUT.hex M=…` | link object modules, e.g. `M="a.link b.link"` (`B=` sets the load address)                 |
-| `make asm-examples`       | build all examples from `examples/asm/`                                                    |
-| `make …-t`                | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
-| `make test`               | run the tests                                                                              |
-| `make test-all`           | all tests, including the long ones (8080 exerciser, Tetris)                                |
-| `make lint`               | `cargo clippy` and `cargo fmt --check`                                                     |
-| `make fmt`                | format the code                                                                            |
-| `make clean`              | remove build results                                                                       |
+| Command                                 | What it does                                                                               |
+|-----------------------------------------|--------------------------------------------------------------------------------------------|
+| `make base`                             | basic computer: processor module (module 1) with LED display and keypad                    |
+| `make full`                             | full computer: display module, MONITOR-F, 64 KB RAM                                        |
+| `make tetris`                           | the Tetris game from the magazine (full configuration)                                     |
+| `make cpm`                              | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                        |
+| `make os`                               | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                    |
+| `make prog P=gamma`                     | a program from `programs/` — here «Гамма», a musical scale                                 |
+| `make programs`                         | list the programs in `programs/`                                                           |
+| `make asm-run F=examples/asm/draw.asm`  | assemble and run a drawing demo: frame, diagonals and an inverse box on the screen         |
+| `make asm-run F=examples/asm/hello.asm` | assemble and run «HELLO, WORLD!» / «ПРИВЕТ, ЮТ-88!» printed through MONITOR-F              |
+| `make asm-run F=examples/asm/ones.asm`  | assemble and run the magazine's first program: «11» on all LEDs                            |
+| `make asm-run F=FILE.asm`               | assemble your own program and run it (`C=minimal\|full` sets the configuration)            |
+| `make …-t`                              | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
+| `make help`                             | list all commands                                                                          |
 
 What happens after each command and what to do next is described below. In every
 window the hot keys are the same: **F2** is the RESET button («УСТ»), **F11** shows the
@@ -288,6 +333,45 @@ magazine hex dump, Intel HEX or relocatable `.link` modules), and the linker
 
 ```sh
 make asm-run F=examples/asm/hello.asm   # prints «HELLO, WORLD!» via MONITOR-F
+make asm-run F=examples/asm/draw.asm    # draws a frame, diagonals and an inverse box on the screen
+```
+
+Other assembler commands:
+
+```sh
+make asm F=FILE.asm [O=FILE.hex]           # assemble only (.hex, .bin, .ihx or .link by extension)
+make link O=OUT.hex M="a.link b.link"      # link object modules (B= sets the load address)
+make asm-examples                          # build all examples from examples/asm/
+```
+
+Running the assembler and the linker directly (after `make`, the binaries are in
+`target/release/`):
+
+```sh
+# help: -h in Russian, -he in English
+target/release/asm-k580vm80a -he
+
+# the output format follows the extension of -o
+target/release/asm-k580vm80a -f examples/asm/draw.asm -o draw.hex    # magazine-style hex dump
+target/release/asm-k580vm80a -f examples/asm/draw.asm -o draw.bin    # flat binary
+target/release/asm-k580vm80a -f examples/asm/draw.asm -o draw.ihx    # Intel HEX
+
+# -t sets the format explicitly, the extension no longer matters
+target/release/asm-k580vm80a -f examples/asm/draw.asm -o draw.txt -t hex
+
+# listing with addresses, codes and the symbol table
+target/release/asm-k580vm80a -f examples/asm/draw.asm -o draw.hex -l draw.lst
+
+# define a symbol for conditional assembly (IFDEF TWICE in macro.asm)
+target/release/asm-k580vm80a -f examples/asm/macro.asm -o macro.bin -D TWICE
+
+# two modules → .link object files → one program at 3000H with a memory map
+target/release/asm-k580vm80a -f examples/asm/hello-link/main.asm  -o main.link
+target/release/asm-k580vm80a -f examples/asm/hello-link/print.asm -o print.link
+target/release/link-k580vm80a main.link print.link -o hello.hex --base 3000 -m hello.map
+
+# run the result in the emulator
+target/release/ut88 --config full --load draw.hex --run 3000
 ```
 
 The examples in [`examples/asm/`](examples/asm/) include the magazine programs
@@ -358,10 +442,12 @@ target/release/ut88 --snapshot ut88-quick.snap            # continue from a snap
 ## Development
 
 ```sh
+make            # cargo build --release (make compile)
 make test       # cargo test
 make test-all   # also the long #[ignore] tests (8080 exerciser, Tetris), in release mode
 make lint       # cargo clippy --all-targets -- -D warnings; cargo fmt --check
 make fmt        # cargo fmt
+make clean      # cargo clean
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventions and
