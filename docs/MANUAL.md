@@ -268,6 +268,20 @@ will say «… — не запущено» ("… — not started").
 **Вид** (View) — «Звук» (Sound, on/off), «громкость» (volume), the screen phosphor colour
 (green or white), «Отладчик (F12)» (Debugger).
 
+The volume and «Звук» are remembered between runs: each setting is a separate text file in
+`~/.config/ut-88/` (more precisely, `$XDG_CONFIG_HOME/ut-88/` if that variable is set; the
+`UT88_CONFIG_DIR` variable selects another folder). A file is written as soon as the
+setting is changed in the menu; the folder is created automatically.
+
+| File         | Contents                         | Default |
+|--------------|----------------------------------|---------|
+| `volume.txt` | volume, a number from 0.0 to 1.0 | `0.70`  |
+| `sound.txt`  | sound: `on` or `off`             | `on`    |
+
+A missing file means the default value; unreadable contents too, with a warning in the
+status line. The `--no-sound` key turns sound off for this run only and does not change
+`sound.txt`.
+
 **Справка** (Help) — «Клавиши (F11)» (Keys: the key mapping tables, the same as below) and
 «О программе» (About). The help window can also be opened without the keyboard: with this
 menu item or with the «F11 Справка» button on the hotkey bar.
@@ -668,6 +682,27 @@ F818H — output a string (HL, terminated with 00H), F86CH — warm start (retur
 prompt). The full vector table is in doc/27. Screen control codes: 08H/18H/19H/1AH — cursor
 ←→↑↓, 0CH — cursor home, 1FH — clear screen, 0DH 0AH — new line.
 
+### Clearing the screen
+
+MONITOR-F has no separate "clear screen" command. Ways to do it:
+
+| How                                         | Result                                                                                                         |
+|---------------------------------------------|----------------------------------------------------------------------------------------------------------------|
+| `GF800` Enter                               | cold start of MONITOR-F: the screen is cleared, «*ЮТ/88*» and `=>` at the top; **programs in memory are kept** |
+| the **СТР** key (Delete or End on the PC)   | the screen is cleared completely; the `=>` prompt is not redrawn — just type the next command                  |
+| from a program: `MVI C,1FH` / `CALL 0F809H` | printing the control code 1FH clears the screen                                                                |
+
+`GF86C` (warm start) does **not** clear the screen — it only prints a new prompt. F3 (cold
+start of the whole machine) also gives a clean screen, but restarts everything and wipes
+memory.
+
+The usual sequence with your own program loaded without running (`make asm-load`):
+
+```
+=> GF800        ← clean screen, «*ЮТ/88*» and =>
+=> G3000        ← start the program at 3000H
+```
+
 ### Example: a program that prints a letter
 
 ```
@@ -1044,7 +1079,9 @@ You can write a program for the КР580ВМ80А in assembly language on the PC, 
 the assembler `asm-k580vm80a` (modules — with the linker `link-k580vm80a`) and load it
 into the emulator. The easiest way is make: `make asm-run F=examples/asm/hello.asm`
 builds the dump `examples/asm/hello.hex` and runs it in the right configuration;
-`make asm F=file.asm` only builds. Examples are in `examples/asm/` («11» on the LEDs,
+`make asm-load F=file.asm` builds and loads **without running** (configuration `full` by
+default) — start the program with `G3000` Enter, and clear the screen before a re-run with
+`GF800` Enter (see "Clearing the screen" in section 6); `make asm F=file.asm` only builds. Examples are in `examples/asm/` («11» on the LEDs,
 memory fill, «Гамма», «Hello» for MONITOR-F, macros, a program of two modules). Guide —
 [ASSEMBLER.md](ASSEMBLER.md); the complete reference — `asm-k580vm80a -he` and
 `link-k580vm80a -he`.

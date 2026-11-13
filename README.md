@@ -106,22 +106,23 @@ cd ut-88
 make base
 ```
 
-| Command                                 | What it does                                                                               |
-|-----------------------------------------|--------------------------------------------------------------------------------------------|
-| `make base`                             | basic computer: processor module (module 1) with LED display and keypad                    |
-| `make full`                             | full computer: display module, MONITOR-F, 64 KB RAM                                        |
-| `make tetris`                           | the Tetris game from the magazine (full configuration)                                     |
-| `make cpm`                              | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                        |
-| `make os`                               | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                    |
-| `make prog P=gamma`                     | a program from `programs/` — here «Гамма», a musical scale                                 |
-| `make programs`                         | list the programs in `programs/`                                                           |
-| `make asm-run F=examples/asm/draw.asm`  | assemble and run a drawing demo: frame, diagonals and an inverse box on the screen         |
-| `make asm-run F=examples/asm/hello.asm` | assemble and run «HELLO, WORLD!» / «ПРИВЕТ, ЮТ-88!» printed through MONITOR-F              |
-| `make asm-run F=examples/asm/ones.asm`  | assemble and run the magazine's first program: «11» on all LEDs                            |
-| `make asm-run F=FILE.asm`               | assemble your own program and run it (`C=minimal\|full` sets the configuration)            |
-| `make asm-load F=FILE.asm`              | assemble and load without running (`C=full` by default); then type `G3000` + Enter         |
-| `make …-t`                              | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
-| `make help`                             | list all commands                                                                          |
+| Command                                 | What it does                                                                                                                  |
+|-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `make base`                             | basic computer: processor module (module 1) with LED display and keypad                                                       |
+| `make full`                             | full computer: display module, MONITOR-F, 64 KB RAM                                                                           |
+| `make tetris`                           | the Tetris game from the magazine (full configuration)                                                                        |
+| `make cpm`                              | CP/M 2.2 on a 256 KB RAM disk; the disk is saved to `ut88-disk.img`                                                           |
+| `make os`                               | the "UT-88 OS" (monitor, editor, assembler, debugger) from the magazine                                                       |
+| `make prog P=gamma`                     | a program from `programs/` — here «Гамма», a musical scale                                                                    |
+| `make programs`                         | list the programs in `programs/`                                                                                              |
+| `make asm-run F=examples/asm/draw.asm`  | assemble and run a drawing demo: frame, diagonals and an inverse box on the screen                                            |
+| `make asm-load F=examples/asm/draw.asm` | load the drawing demo without running: `G3000` + Enter starts it, `GF800` + Enter clears the screen (program stays in memory) |
+| `make asm-run F=examples/asm/hello.asm` | assemble and run «HELLO, WORLD!» / «ПРИВЕТ, ЮТ-88!» printed through MONITOR-F                                                 |
+| `make asm-run F=examples/asm/ones.asm`  | assemble and run the magazine's first program: «11» on all LEDs                                                               |
+| `make asm-run F=FILE.asm`               | assemble your own program and run it (`C=minimal\|full` sets the configuration)                                               |
+| `make asm-load F=FILE.asm`              | assemble and load without running (`C=full` by default); then type `G3000` + Enter                                            |
+| `make …-t`                              | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME`                                    |
+| `make help`                             | list all commands                                                                                                             |
 
 What happens after each command and what to do next is described below. In every
 window the hot keys are the same: **F2** is the RESET button («УСТ»), **F11** shows the
@@ -336,6 +337,7 @@ magazine hex dump, Intel HEX or relocatable `.link` modules), and the linker
 make asm-run F=examples/asm/hello.asm   # prints «HELLO, WORLD!» via MONITOR-F
 make asm-run F=examples/asm/draw.asm    # draws a frame, diagonals and an inverse box on the screen
 make asm-load F=examples/asm/draw.asm   # loads it but does not start it: type G3000 + Enter in MONITOR-F
+                                        # GF800 + Enter clears the screen and keeps the program in memory
 ```
 
 Other assembler commands:
