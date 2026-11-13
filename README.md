@@ -119,6 +119,7 @@ make base
 | `make asm-run F=examples/asm/hello.asm` | assemble and run «HELLO, WORLD!» / «ПРИВЕТ, ЮТ-88!» printed through MONITOR-F              |
 | `make asm-run F=examples/asm/ones.asm`  | assemble and run the magazine's first program: «11» on all LEDs                            |
 | `make asm-run F=FILE.asm`               | assemble your own program and run it (`C=minimal\|full` sets the configuration)            |
+| `make asm-load F=FILE.asm`              | assemble and load without running (`C=full` by default); then type `G3000` + Enter         |
 | `make …-t`                              | the same in the terminal: `base-t`, `full-t`, `tetris-t`, `cpm-t`, `os-t`, `prog-t P=NAME` |
 | `make help`                             | list all commands                                                                          |
 
@@ -334,6 +335,7 @@ magazine hex dump, Intel HEX or relocatable `.link` modules), and the linker
 ```sh
 make asm-run F=examples/asm/hello.asm   # prints «HELLO, WORLD!» via MONITOR-F
 make asm-run F=examples/asm/draw.asm    # draws a frame, diagonals and an inverse box on the screen
+make asm-load F=examples/asm/draw.asm   # loads it but does not start it: type G3000 + Enter in MONITOR-F
 ```
 
 Other assembler commands:

@@ -326,12 +326,13 @@ saying what it does and how to build and run it.
 | `macro.asm`                                   | minimal       | macros with `LOCAL`, `REPT`, `IF`/`IFDEF`: sum of squares on the LEDs                                                                   |
 | `hello-link/main.asm`, `hello-link/print.asm` | full          | two modules with `PUBLIC`/`EXTRN`, `CSEG`/`DSEG`, linked at 3000H                                                                       |
 
-| Command                                           | What it does                                                     |
-|---------------------------------------------------|------------------------------------------------------------------|
-| `make asm F=file.asm [O=file.hex]`                | assemble; the default output is `file.hex` next to the source    |
-| `make asm-run F=file.asm [C=minimal\|full]`       | assemble to `file.hex` and run it in the emulator                |
-| `make link O=file.hex M="a.link b.link" [B=addr]` | link modules; the map is written next to the output (`file.map`) |
-| `make asm-examples`                               | build all examples (and link `hello-link/hello-link.hex`)        |
+| Command                                           | What it does                                                                                                                |
+|---------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `make asm F=file.asm [O=file.hex]`                | assemble; the default output is `file.hex` next to the source                                                               |
+| `make asm-run F=file.asm [C=minimal\|full]`       | assemble to `file.hex` and run it in the emulator                                                                           |
+| `make asm-load F=file.asm [C=full\|minimal]`      | assemble and load without running (default `full`); start it with `G address` (MONITOR-F) or «7 address» (module 1 MONITOR) |
+| `make link O=file.hex M="a.link b.link" [B=addr]` | link modules; the map is written next to the output (`file.map`)                                                            |
+| `make asm-examples`                               | build all examples (and link `hello-link/hello-link.hex`)                                                                   |
 
 `make asm-run` (script `scripts/asm-run.sh`) takes the start address from `END address`;
 without it — the lowest address of the program. The configuration is `C=` or a guess:
