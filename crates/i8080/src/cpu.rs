@@ -179,6 +179,7 @@ impl Cpu {
     /// Выполнить одну команду. Возвращает число тактов.
     ///
     /// В состоянии HLT команда не выполняется, возвращается [`HALT_STEP_CYCLES`].
+    #[inline]
     pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> u32 {
         self.ei_delay = false;
         if self.halted {
@@ -191,24 +192,28 @@ impl Cpu {
         t
     }
 
+    #[inline(always)]
     fn fetch<B: Bus + ?Sized>(&mut self, bus: &mut B) -> u8 {
         let v = bus.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         v
     }
 
+    #[inline(always)]
     fn fetch16<B: Bus + ?Sized>(&mut self, bus: &mut B) -> u16 {
         let lo = self.fetch(bus);
         let hi = self.fetch(bus);
         u16::from_le_bytes([lo, hi])
     }
 
+    #[inline(always)]
     fn read16<B: Bus + ?Sized>(bus: &mut B, addr: u16) -> u16 {
         let lo = bus.read(addr);
         let hi = bus.read(addr.wrapping_add(1));
         u16::from_le_bytes([lo, hi])
     }
 
+    #[inline(always)]
     fn write16<B: Bus + ?Sized>(bus: &mut B, addr: u16, v: u16) {
         let [lo, hi] = v.to_le_bytes();
         bus.write(addr, lo);
@@ -219,6 +224,7 @@ impl Cpu {
     // машинных циклах в слове состояния установлен бит STACK (D2), по нему, например,
     // квазидиск ЮТ-88 перехватывает стек.
 
+    #[inline(always)]
     fn push<B: Bus + ?Sized>(&mut self, bus: &mut B, v: u16) {
         let [lo, hi] = v.to_le_bytes();
         self.sp = self.sp.wrapping_sub(1);
@@ -227,6 +233,7 @@ impl Cpu {
         bus.write_stack(self.sp, lo);
     }
 
+    #[inline(always)]
     fn pop<B: Bus + ?Sized>(&mut self, bus: &mut B) -> u16 {
         let lo = bus.read_stack(self.sp);
         let hi = bus.read_stack(self.sp.wrapping_add(1));
@@ -235,6 +242,7 @@ impl Cpu {
     }
 
     /// Регистр по 3-битному коду: 0 B, 1 C, 2 D, 3 E, 4 H, 5 L, 6 M, 7 A.
+    #[inline(always)]
     fn get_reg<B: Bus + ?Sized>(&mut self, bus: &mut B, r: u8) -> u8 {
         match r {
             0 => self.b,
@@ -248,6 +256,7 @@ impl Cpu {
         }
     }
 
+    #[inline(always)]
     fn set_reg<B: Bus + ?Sized>(&mut self, bus: &mut B, r: u8, v: u8) {
         match r {
             0 => self.b = v,

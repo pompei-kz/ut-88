@@ -232,35 +232,85 @@ impl Machine {
         }
     }
 
-    /// Выполнить одну команду (или принять прерывание). Возвращает такты.
-    pub fn step(&mut self) -> u32 {
-        self.bus.st.now = self.master_ticks();
-        let t = if self.clock.irq_pending && self.cpu.interrupts_enabled() {
-            let t = self.cpu.interrupt(&mut self.bus, INTA_OPCODE).unwrap_or(0);
-            self.clock.irq_pending = false;
-            t
-        } else {
-            self.cpu.step(&mut self.bus)
-        };
-        // Секундный импульс К176ИЕ5 взводит триггер запроса прерывания.
+    /// Такт процессора, на котором (или после которого) придёт следующий секундный
+    /// импульс часов: первый `cycles`, для которого `cycles · 9 ≥ next_tick`.
+    #[inline]
+    fn next_clock_cycle(&self) -> u64 {
+        self.clock.next_tick.div_ceil(CPU_DIV)
+    }
+
+    /// Секундный импульс К176ИЕ5 взводит триггер запроса прерывания (вызывается, когда
+    /// время дошло до [`Machine::next_clock_cycle`]).
+    #[cold]
+    fn clock_pulse(&mut self) {
         while self.master_ticks() >= self.clock.next_tick {
             self.clock.next_tick += MASTER_HZ;
             if self.bus.st.config.clock_interrupts {
                 self.clock.irq_pending = true;
             }
         }
+    }
+
+    /// Одна команда (или приём прерывания) без проверки часов.
+    #[inline(always)]
+    fn exec_one(&mut self) -> u32 {
+        self.bus.st.now = self.cpu.cycles * CPU_DIV;
+        if self.clock.irq_pending && self.cpu.interrupts_enabled() {
+            let t = self.cpu.interrupt(&mut self.bus, INTA_OPCODE).unwrap_or(0);
+            self.clock.irq_pending = false;
+            t
+        } else {
+            self.cpu.step(&mut self.bus)
+        }
+    }
+
+    /// Выполнить одну команду (или принять прерывание). Возвращает такты.
+    pub fn step(&mut self) -> u32 {
+        self.bus.refresh_map();
+        let t = self.exec_one();
+        if self.cpu.cycles >= self.next_clock_cycle() {
+            self.clock_pulse();
+        }
         t
     }
 
     /// Выполнять команды, пока не пройдёт не меньше `n` тактов процессора. Возвращает
     /// число выполненных тактов.
+    ///
+    /// Результат тот же, что у цикла [`Machine::step`]; между секундными импульсами часов
+    /// команды выполняются без проверок, а стоящий в HLT процессор (без прерывания,
+    /// которое он мог бы принять) сразу доводится до ближайшего события.
     pub fn run_cycles(&mut self, n: u64) -> u64 {
+        self.bus.refresh_map();
         let start = self.cpu.cycles;
         let end = start + n;
         while self.cpu.cycles < end {
-            self.step();
+            let pulse = self.next_clock_cycle();
+            let stop = end.min(pulse);
+            while self.cpu.cycles < stop {
+                if self.cpu.halted && !(self.clock.irq_pending && self.cpu.interrupts_enabled()) {
+                    self.skip_halt(stop);
+                } else {
+                    self.exec_one();
+                }
+            }
+            if self.cpu.cycles >= pulse {
+                self.clock_pulse();
+            }
         }
         self.cpu.cycles - start
+    }
+
+    /// Процессор стоит в HLT и не примет прерывание до `stop`: сделать разом столько
+    /// «пустых» шагов по [`i8080::HALT_STEP_CYCLES`] тактов, сколько сделал бы цикл
+    /// [`Machine::step`], пока счётчик тактов не дойдёт до `stop`.
+    fn skip_halt(&mut self, stop: u64) {
+        let h = u64::from(i8080::HALT_STEP_CYCLES);
+        let k = (stop - self.cpu.cycles).div_ceil(h);
+        self.cpu.ei_delay = false;
+        self.cpu.cycles += (k - 1) * h;
+        self.bus.st.now = self.cpu.cycles * CPU_DIV;
+        self.cpu.cycles += h;
     }
 
     /// Выполнить один кадр дисплея (20,16 мс = 35 840 тактов).
@@ -400,6 +450,19 @@ impl Machine {
             }
             None => false,
         }
+    }
+
+    /// Экранное ОЗУ изменилось с прошлого вызова (признак сбрасывается). Сразу после
+    /// включения и восстановления снимка — `true`. Изменение экранного ОЗУ в обход
+    /// процессора и [`Machine::poke`] (прямо через `bus.st`) не отслеживается.
+    pub fn take_screen_changed(&mut self) -> bool {
+        std::mem::take(&mut self.bus.screen_changed)
+    }
+
+    /// Байты индикаторов модуля 1 изменились с прошлого вызова (признак сбрасывается).
+    /// Сразу после включения и восстановления снимка — `true`.
+    pub fn take_indicators_changed(&mut self) -> bool {
+        std::mem::take(&mut self.bus.indicators_changed)
     }
 
     // ----- магнитофон -----
@@ -595,6 +658,9 @@ impl Machine {
         self.cpu = Cpu::from(&s.cpu);
         self.bus.st = s.bus.clone();
         self.bus.sound_edges.clear();
+        self.bus.screen_changed = true;
+        self.bus.indicators_changed = true;
+        self.bus.refresh_map();
         self.clock = s.clock.clone();
         Ok(())
     }

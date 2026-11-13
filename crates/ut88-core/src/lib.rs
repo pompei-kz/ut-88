@@ -5,6 +5,9 @@
 //! [`Machine::run_frame`] / [`Machine::run_cycles`], нажимают клавиши и читают индикаторы
 //! ([`Machine::indicator_segments`]) и экран ([`Machine::screen`],
 //! [`Machine::render_screen`]). Время — только в тактах (16 МГц / 9 на такт процессора).
+//! Перерисовывать экран и индикаторы можно только при изменении —
+//! [`Machine::take_screen_changed`], [`Machine::take_indicators_changed`]; перепады для
+//! звука собираются, только пока включён [`Machine::set_sound_capture`].
 //!
 //! Квазидиск (doc/32) — часть шины ([`Config::kvazidisk`]), загрузка CP/M и ОС ЮТ-88 и
 //! работа с файлами диска CP/M — модуль [`cpm`]. Другие расширения подключаются через
