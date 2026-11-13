@@ -306,6 +306,7 @@ fn main() -> Result<()> {
             sound: !args.no_sound,
             programs_dir,
             kvazidisk_file: args.kvazidisk.clone(),
+            settings_dir: ut88_gui::settings::config_dir(),
         })
     }
 }

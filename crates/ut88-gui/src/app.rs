@@ -15,6 +15,7 @@ use crate::dialogs::{FileDialogs, RfdDialogs};
 use crate::draw::{self, Hit, Hits, Xf};
 use crate::keymap;
 use crate::loader::{self, ProgramInfo, parse_hex_u16};
+use crate::settings::{self, Settings};
 use crate::{GuiOptions, Speed};
 
 /// Минимальное время удержания клавиши после щелчка мышью, с (эмулированного времени).
@@ -154,16 +155,24 @@ pub struct App {
     quick_snapshot: PathBuf,
     /// Как открыть звук, когда его включают в меню «Вид» (в тестах — без звуковой карты).
     open_audio: fn() -> Audio,
+    /// Запоминаемые настройки (громкость, звук вкл/выкл).
+    settings: Settings,
+    /// Папка настроек (`None` — не запоминать).
+    settings_dir: Option<PathBuf>,
 }
 
 impl App {
     /// Создать приложение.
     pub fn new(opts: GuiOptions) -> Self {
-        let audio = if opts.sound {
-            Audio::new()
-        } else {
-            Audio::silent()
+        let (settings, settings_warnings) = match opts.settings_dir.as_deref() {
+            Some(d) => Settings::load(d),
+            None => (Settings::default(), Vec::new()),
         };
+        // Ключ `--no-sound` действует только на этот запуск: сохранённое `sound` не
+        // меняется, пока звук не переключат в меню.
+        let sound = opts.sound && settings.sound;
+        let mut audio = if sound { Audio::new() } else { Audio::silent() };
+        audio.set_volume(settings.volume);
         let programs_dir = opts.programs_dir.or_else(loader::find_programs_dir);
         let programs = programs_dir
             .as_deref()
@@ -176,7 +185,7 @@ impl App {
             last_tick: Instant::now(),
             debt: 0.0,
             actual_speed: 1.0,
-            sound_wanted: opts.sound,
+            sound_wanted: sound,
             audio,
             capturing: false,
             resync_at: 0,
@@ -213,11 +222,22 @@ impl App {
             dialogs: Box::new(RfdDialogs),
             quick_snapshot: PathBuf::from(QUICK_SNAPSHOT),
             open_audio: Audio::new,
+            settings,
+            settings_dir: opts.settings_dir,
         };
         if let Some(e) = app.audio.error()
-            && opts.sound
+            && sound
         {
             app.say(format!("Звук недоступен: {e}"));
+        }
+        for w in &settings_warnings {
+            eprintln!("ut88: настройка взята по умолчанию: {w}");
+        }
+        if !settings_warnings.is_empty() {
+            app.say(format!(
+                "Настройка взята по умолчанию: {}",
+                settings_warnings.join("; ")
+            ));
         }
         app.sync_sound_capture();
         app
@@ -236,6 +256,35 @@ impl App {
     /// Задать, как открывать звук при включении в меню (по умолчанию [`Audio::new`]).
     pub fn set_audio_opener(&mut self, f: fn() -> Audio) {
         self.open_audio = f;
+    }
+
+    /// Записать файл параметра `name` в папку настроек (ошибка — в строку состояния и
+    /// stderr).
+    fn save_param(&mut self, name: &str, text: &str) {
+        let Some(dir) = self.settings_dir.clone() else {
+            return;
+        };
+        if let Err(e) = settings::write_param(&dir, name, text) {
+            let msg = format!("Настройка не сохранена в {}: {e}", dir.join(name).display());
+            eprintln!("ut88: {msg}");
+            self.say(msg);
+        }
+    }
+
+    /// Запомнить и сразу записать громкость (файл не трогается, если запись не меняется).
+    fn set_volume_setting(&mut self, v: f32) {
+        let old = settings::volume_text(self.settings.volume);
+        self.settings.volume = v;
+        let new = settings::volume_text(v);
+        if new != old {
+            self.save_param(settings::VOLUME_FILE, &new);
+        }
+    }
+
+    /// Запомнить и сразу записать «звук вкл/выкл».
+    fn set_sound_setting(&mut self, on: bool) {
+        self.settings.sound = on;
+        self.save_param(settings::SOUND_FILE, &settings::sound_text(on));
     }
 
     fn has_display(&self) -> bool {
@@ -998,13 +1047,19 @@ impl App {
                             self.fail(format!("Звук недоступен: {e}"));
                         }
                     }
+                    self.audio.set_volume(self.settings.volume);
                     self.sound_wanted = on;
                     self.audio.set_enabled(on);
                     self.sync_sound_capture();
+                    self.set_sound_setting(on);
                 }
                 let mut vol = self.audio.volume();
-                if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).text("громкость")).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut vol, 0.0..=1.0).text("громкость"))
+                    .changed()
+                {
                     self.audio.set_volume(vol);
+                    self.set_volume_setting(self.audio.volume());
                 }
                 ui.separator();
                 ui.label("Люминофор:");
