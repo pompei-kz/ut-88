@@ -491,3 +491,104 @@ fn cpm_menu_boots_and_puts_files() {
     assert!(app.m.config().monitor_f_rom);
     assert!(app.m.has_kvazidisk());
 }
+
+// ------------------------------------------------------------------ «максимум»
+
+/// Приложение на «максимуме».
+fn max_app(config: Config) -> App {
+    let opts = Options {
+        speed: 0.0,
+        ..Options::default()
+    };
+    App::new(Machine::new(config), opts)
+}
+
+/// Шагать главным циклом (терминал — TestBackend, событий нет), пока `done` не станет
+/// истинным, но не дольше `secs` реального времени.
+fn drive(app: &mut App, secs: f64, mut done: impl FnMut(&App) -> bool) -> bool {
+    let mut term = Terminal::new(TestBackend::new(80, 32)).unwrap();
+    let mut pacer = ut88_tui::Pacer::new(app);
+    let mut events = |_: Duration| Ok(None);
+    let t0 = Instant::now();
+    while t0.elapsed().as_secs_f64() < secs {
+        ut88_tui::frame(&mut term, app, &mut pacer, &mut events).unwrap();
+        if done(app) {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn max_speed_breakpoint_stops() {
+    let mut app = max_app(Config::minimal());
+    // Без точек — быстрый путь, машина идёт.
+    assert!(!drive(&mut app, 0.05, |a| !a.running()));
+    assert!(app.m.cycles() > 0);
+    app.dbg.breakpoints.insert(0x005F);
+    assert!(drive(&mut app, 10.0, |a| !a.running()), "не остановился");
+    assert_eq!(app.view, View::Debugger);
+    assert_eq!(app.m.cpu.pc, 0x005F);
+}
+
+#[test]
+fn max_speed_pad_hold_types_directive() {
+    let mut app = max_app(Config::minimal());
+    assert!(!drive(&mut app, 0.05, |_| false));
+    // Директива 8: контрольная сумма 0000–01FF (у monitor-fixed.bin — 0171H). Кнопки
+    // держатся до чтения порта A0H — покомандный путь и на «максимуме».
+    let keys: Vec<_> = "8000001FF"
+        .chars()
+        .map(|c| {
+            let d = c.to_digit(16).unwrap() as u8;
+            (Target::Pad(PadKey::Hex(d)), c.to_string())
+        })
+        .collect();
+    type_all(&mut app.input, &keys);
+    let ok = drive(&mut app, 20.0, |a| {
+        a.input.pending() == 0
+            && a.input.current().is_none()
+            && a.m.indicator_bytes() == [0x11, 0x71, 0x01]
+    });
+    assert!(ok, "индикаторы {:02X?}", app.m.indicator_bytes());
+}
+
+#[test]
+fn max_speed_redraws_only_on_change() {
+    let mut app = max_app(Config::full());
+    let mut pacer = ut88_tui::Pacer::new(&app);
+    app.m.run_seconds(0.5);
+    assert!(pacer.should_draw(&mut app), "первая отрисовка");
+    pacer.drawn(&app);
+    // Сразу — нельзя (не чаще ≈ 30 Гц), даже если экран изменился.
+    app.m.poke(0xE800, 0x41);
+    assert!(!pacer.should_draw(&mut app));
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(pacer.should_draw(&mut app), "экран изменился");
+    pacer.drawn(&app);
+    // Ничего не изменилось — не рисовать.
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(!pacer.should_draw(&mut app));
+    // Индикаторы.
+    app.m.poke(0x9000, 0x88);
+    assert!(pacer.should_draw(&mut app), "индикаторы изменились");
+    pacer.drawn(&app);
+    // Такты в строке состояния: не чаще ≈ 4 Гц.
+    app.m.set_clock_interrupts(false);
+    app.m.jump(0xF800);
+    app.m.run_cycles(1000);
+    let _ = app.m.take_screen_changed();
+    let _ = app.m.take_indicators_changed();
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(
+        !pacer.should_draw(&mut app),
+        "строка состояния — не чаще 4 Гц"
+    );
+    std::thread::sleep(Duration::from_millis(260));
+    assert!(pacer.should_draw(&mut app), "такты изменились");
+    pacer.drawn(&app);
+    // Событие терминала.
+    std::thread::sleep(Duration::from_millis(40));
+    pacer.mark_dirty();
+    assert!(pacer.should_draw(&mut app));
+}

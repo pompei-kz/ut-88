@@ -36,11 +36,16 @@ fn tmp_dir(name: &str) -> PathBuf {
 
 impl Win {
     fn new(name: &str, config: Config) -> Self {
+        Self::with_machine(name, Machine::new(config), Speed::X1)
+    }
+
+    /// Окно с готовой машиной и скоростью.
+    fn with_machine(name: &str, machine: Machine, speed: Speed) -> Self {
         let dir = tmp_dir(name);
         let dlg = ScriptedDialogs::default();
         let opts = GuiOptions {
-            machine: Machine::new(config),
-            speed: Speed::X1,
+            machine,
+            speed,
             sound: false,
             programs_dir: Some(programs_dir()),
             kvazidisk_file: None,
@@ -839,4 +844,235 @@ fn fkeys_from_keyboard() {
             .values()
             .any(|v| v.commands.contains(&egui::ViewportCommand::Close))
     );
+}
+
+// ------------------------------------------------------------------ «максимум»
+
+/// Нажать и отпустить клавишу полной клавиатуры с кодом `code` (прямо в машине).
+fn kb_code(m: &mut Machine, code: u8) {
+    let (key, modifier) = KbKey::for_code(code).expect("код клавиши");
+    if let Some(md) = modifier {
+        m.kb_down(md);
+    }
+    m.kb_down(key);
+    m.run_seconds(0.06);
+    m.kb_up(key);
+    if let Some(md) = modifier {
+        m.kb_up(md);
+    }
+    m.run_seconds(0.3);
+}
+
+/// Держать клавишу, пока программа её не примет (щелчок F803H — перепад выхода
+/// магнитофона), затем отпустить.
+fn kb_accept(m: &mut Machine, code: u8) {
+    let (key, _) = KbKey::for_code(code).expect("код клавиши");
+    m.set_sound_capture(true);
+    m.drain_sound_edges();
+    m.kb_down(key);
+    let limit = m.cycles() + 3 * CPU_HZ as u64;
+    while m.cycles() < limit && m.drain_sound_edges().is_empty() {
+        m.run_seconds(0.005);
+    }
+    m.kb_up(key);
+    m.set_sound_capture(false);
+    m.run_seconds(0.3);
+}
+
+fn machine_wait_text(m: &mut Machine, text: &str, secs: f64) {
+    let limit = m.cycles() + (secs * CPU_HZ) as u64;
+    while !m.screen().unwrap().text().contains(text) {
+        assert!(m.cycles() < limit, "на экране нет «{text}»");
+        m.run_seconds(0.05);
+    }
+}
+
+/// МОНИТОР-F ждёт клавишу.
+fn bench_full() -> Machine {
+    let mut m = Machine::new(Config::full());
+    m.run_seconds(0.5);
+    m
+}
+
+/// «Тетрис» (programs/tetris.bin с 3000H) идёт на уровне 0.
+fn bench_tetris() -> Machine {
+    let mut m = bench_full();
+    m.load_bin(0x3000, &program_bin("tetris"));
+    for b in b"G3000\r" {
+        kb_code(&mut m, *b);
+    }
+    machine_wait_text(&mut m, "ВАШ УРОВЕНЬ(0-7) ?", 3.0);
+    kb_accept(&mut m, b'0');
+    machine_wait_text(&mut m, "НАЖМИТЕ ЛЮБУЮ КЛАВИШУ", 3.0);
+    kb_accept(&mut m, b' ');
+    m.run_seconds(0.5);
+    m
+}
+
+/// Замер «максимума» окна (кадры egui через `Harness::step`, без GPU и вертикальной
+/// синхронизации): эмулированные МГц и кадров окна в секунду.
+///
+/// ```text
+/// cargo test --release -p ut88-gui bench_max -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "замер скорости, запускать вручную в release"]
+fn bench_max_speed() {
+    let secs: f64 = std::env::var("UT88_BENCH_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3.0);
+    type Load = (&'static str, &'static str, fn() -> Machine);
+    let loads: [Load; 2] = [
+        ("full", "МОНИТОР-F, простой", bench_full),
+        ("tetris", "«Тетрис», уровень 0", bench_tetris),
+    ];
+    println!("GUI, «максимум», прогон {secs} с");
+    println!();
+    println!(
+        "| {:<8} | {:<20} | {:>9} | {:>12} |",
+        "Нагрузка", "Что", "МГц", "Кадров/с"
+    );
+    println!("|{:-<10}|{:-<22}|{:->11}|{:->14}|", "", "", ":", ":");
+    for (name, what, make) in loads {
+        let mut w = Win::with_machine(name, make(), Speed::MAX);
+        let c0 = w.m().cycles();
+        let t0 = Instant::now();
+        let mut frames = 0u64;
+        while t0.elapsed().as_secs_f64() < secs {
+            w.h.step();
+            frames += 1;
+        }
+        let dt = t0.elapsed().as_secs_f64();
+        let mhz = (w.m().cycles() - c0) as f64 / dt / 1e6;
+        let fps = frames as f64 / dt;
+        println!("| {name:<8} | {what:<20} | {mhz:>9.1} | {fps:>12.1} |");
+    }
+}
+
+/// Программа в C000H: бесконечно переключает выход на магнитофон (порт A1H).
+const TOGGLE_A1: [u8; 11] = [
+    0x3E, 0x01, 0xD3, 0xA1, // MVI A,1; OUT A1H
+    0x3E, 0x00, 0xD3, 0xA1, // MVI A,0; OUT A1H
+    0xC3, 0x00, 0xC0, // JMP C000H
+];
+
+/// Машина собирает перепады: прогнать программу и посмотреть, накопились ли они.
+fn collects_edges(w: &mut Win) -> bool {
+    w.m().load_bin(0xC000, &TOGGLE_A1);
+    w.m().jump(0xC000);
+    w.m().drain_sound_edges();
+    w.m().run_cycles(1000);
+    !w.m().drain_sound_edges().is_empty()
+}
+
+#[test]
+fn sound_resumes_after_max_speed() {
+    let mut w = Win::new("sound-max", Config::full());
+    w.app_mut().fake_sound = true;
+    w.settle();
+    assert!(w.app().capturing);
+    assert!(collects_edges(&mut w));
+
+    // «Максимум»: звук не выводится, перепады не собираются.
+    w.menu("Машина", &Speed::MAX.label());
+    assert_eq!(w.app().speed, Speed::MAX);
+    assert!(!w.app().capturing);
+    assert!(!collects_edges(&mut w));
+    w.h.step();
+
+    // Обратно ×1: сбор перепадов включён, генератор начат заново с текущего момента.
+    let before = w.app().resync_at;
+    let ticks = w.m().master_ticks();
+    w.menu("Машина", &Speed::X1.label());
+    assert_eq!(w.app().speed, Speed::X1);
+    assert!(w.app().capturing);
+    assert!(w.app().resync_at > before);
+    assert!(w.app().resync_at >= ticks);
+    assert!(collects_edges(&mut w));
+
+    // Звук выключен — перепады не собираются и на ×1.
+    w.app_mut().fake_sound = false;
+    w.h.step();
+    assert!(!w.app().capturing);
+    assert!(!collects_edges(&mut w));
+}
+
+#[test]
+fn breakpoint_stops_at_max_speed() {
+    // C000: INX H; MOV A,H; ORA L; JNZ C000; C006: JMP C000 — C006H раз в 65 536 кругов.
+    let code = [0x23, 0x7C, 0xB5, 0xC2, 0x00, 0xC0, 0xC3, 0x00, 0xC0];
+    let mut m = bench_full();
+    m.load_bin(0xC000, &code);
+    m.jump(0xC000);
+    let mut w = Win::with_machine("bp-max", m, Speed::MAX);
+    // Без точек — крупные порции, машина идёт.
+    for _ in 0..3 {
+        w.h.step();
+    }
+    assert!(!w.app().paused);
+    assert!(w.app().max_chunk >= FRAME_CYCLES);
+    w.app_mut().dbg.breakpoints.push(0xC006);
+    for _ in 0..200 {
+        w.h.step();
+        if w.app().paused {
+            break;
+        }
+    }
+    let c = w.app().m.cpu.clone();
+    assert!(w.app().paused, "не остановился: {c:?}");
+    assert_eq!(w.m().cpu.pc, 0xC006);
+    assert_eq!((w.m().cpu.h, w.m().cpu.l), (0, 0));
+    assert_eq!(
+        w.app().dbg.stop_reason.as_deref(),
+        Some("точка останова C006")
+    );
+}
+
+#[test]
+fn screen_and_indicators_redrawn_on_change() {
+    let mut w = Win::new("redraw", Config::full());
+    w.m().run_seconds(0.5);
+    w.h.step();
+    w.pause();
+    w.settle();
+    assert!(w.app().screen_tex.is_some());
+    // Без изменений текстура не перерисовывается: испорченный буфер остаётся как есть.
+    w.app_mut().screen_buf.fill(7);
+    w.settle();
+    assert!(w.app().screen_buf.iter().all(|&b| b == 7));
+    // Изменение экранного ОЗУ — перерисовка.
+    w.m().poke(0xE800, 0x41);
+    w.settle();
+    assert!(w.app().screen_buf.iter().any(|&b| b != 7));
+    // Смена люминофора — тоже.
+    w.app_mut().screen_buf.fill(7);
+    w.app_mut().phosphor = Phosphor::White;
+    w.settle();
+    assert!(w.app().screen_buf.iter().any(|&b| b != 7));
+
+    // Индикаторы.
+    let old = w.app().segs;
+    w.m().poke(0x9000, 0x88);
+    w.settle();
+    assert_ne!(w.app().segs, old);
+    let segs = w.m().indicator_segments();
+    assert_eq!(w.app().segs, segs);
+}
+
+#[test]
+fn max_budget_adapts_to_frame_rate() {
+    let ms = Duration::from_millis;
+    // Окно успевает — бюджет медленно растёт до предела.
+    let mut b = MAX_BUDGET_START;
+    for _ in 0..1000 {
+        b = next_max_budget(b, ms(17));
+    }
+    assert_eq!(b, MAX_BUDGET_MAX);
+    // Пропуск обновления экрана — бюджет падает, но не ниже предела.
+    assert_eq!(next_max_budget(b, ms(33)), b - MAX_BUDGET_DOWN);
+    for _ in 0..100 {
+        b = next_max_budget(b, ms(33));
+    }
+    assert_eq!(b, MAX_BUDGET_MIN);
 }
