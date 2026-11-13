@@ -22,6 +22,34 @@ const MOUSE_MIN_HOLD: f64 = 0.3;
 /// Минимальное время удержания клавиши ПК, с (нажатие и отпускание могли прийти в одном
 /// кадре окна).
 const PC_MIN_HOLD: f64 = 0.06;
+/// Бюджет эмуляции на кадр окна при конечной скорости (догон отставания), реального
+/// времени.
+const SPEED_BUDGET: Duration = Duration::from_millis(30);
+/// Бюджет эмуляции на кадр окна на «максимуме»: начальный, наименьший и наибольший.
+/// Подстраивается так, чтобы окно успевало к каждому обновлению экрана ПК (≈ 60 Гц).
+const MAX_BUDGET_START: Duration = Duration::from_millis(12);
+const MAX_BUDGET_MIN: Duration = Duration::from_millis(8);
+const MAX_BUDGET_MAX: Duration = Duration::from_millis(14);
+/// Кадр окна дольше этого — пропущено обновление экрана ПК: бюджет уменьшается.
+const MAX_FRAME_MISSED: Duration = Duration::from_millis(22);
+/// Шаг уменьшения бюджета при пропуске и увеличения — при успехе.
+const MAX_BUDGET_DOWN: Duration = Duration::from_millis(1);
+const MAX_BUDGET_UP: Duration = Duration::from_micros(50);
+/// Порция эмуляции на «максимуме» — около миллисекунды реального времени, в кадрах
+/// дисплея: наибольшая (наименьшая — один кадр).
+const MAX_CHUNK_FRAMES: u64 = 64;
+
+/// Следующий бюджет эмуляции на «максимуме» по длительности прошлого кадра окна:
+/// медленно растёт, пока окно успевает, и заметно падает при пропуске.
+fn next_max_budget(budget: Duration, frame: Duration) -> Duration {
+    let b = if frame > MAX_FRAME_MISSED {
+        budget.saturating_sub(MAX_BUDGET_DOWN)
+    } else {
+        budget + MAX_BUDGET_UP
+    };
+    b.clamp(MAX_BUDGET_MIN, MAX_BUDGET_MAX)
+}
+
 /// Файл быстрого снимка (F6/F7).
 pub const QUICK_SNAPSHOT: &str = "ut88-quick.snap";
 
@@ -84,12 +112,27 @@ pub struct App {
     actual_speed: f64,
     audio: Audio,
     sound_wanted: bool,
+    /// Машина собирает перепады для звука.
+    capturing: bool,
+    /// Момент (такт 16 МГц) последней ресинхронизации генератора звука.
+    resync_at: u64,
+    /// В тестах: считать звуковой вывод открытым и включённым.
+    #[cfg(test)]
+    fake_sound: bool,
+    /// Бюджет эмуляции на кадр окна на «максимуме».
+    max_budget: Duration,
+    /// Порция эмуляции на «максимуме», такты.
+    max_chunk: u64,
+    /// Сегменты индикаторов (обновляются при изменении).
+    segs: [u8; 6],
     holds: HashMap<Hit, Hold>,
     mouse_down: Option<Hit>,
     /// Клавиатура ПК управляет модулем 1 даже в полной конфигурации.
     pc_to_pad: bool,
     screen_tex: Option<TextureHandle>,
     screen_buf: Vec<u8>,
+    /// Люминофор, которым нарисована текстура экрана (`None` — перерисовать).
+    tex_phosphor: Option<Phosphor>,
     phosphor: Phosphor,
     dbg: Debugger,
     help_open: bool,
@@ -135,11 +178,19 @@ impl App {
             actual_speed: 1.0,
             sound_wanted: opts.sound,
             audio,
+            capturing: false,
+            resync_at: 0,
+            #[cfg(test)]
+            fake_sound: false,
+            max_budget: MAX_BUDGET_START,
+            max_chunk: FRAME_CYCLES,
+            segs: [0; 6],
             holds: HashMap::new(),
             mouse_down: None,
             pc_to_pad: false,
             screen_tex: None,
             screen_buf: vec![0; screen::WIDTH * screen::HEIGHT * 4],
+            tex_phosphor: None,
             phosphor: Phosphor::Green,
             dbg: Debugger::default(),
             help_open: false,
@@ -202,11 +253,33 @@ impl App {
         self.error_popup = Some(s);
     }
 
+    /// Звук выводится (устройство открыто и звук включён).
+    fn sound_out(&self) -> bool {
+        #[cfg(test)]
+        if self.fake_sound {
+            return true;
+        }
+        self.audio.is_available() && self.audio.enabled()
+    }
+
+    /// Нужно ли собирать перепады для звука: звук выводится и скорость не «максимум»
+    /// (на «максимуме» звук не выводится).
+    fn want_capture(&self) -> bool {
+        self.sound_out() && self.speed != Speed::MAX
+    }
+
+    /// Включить или выключить сбор перепадов по [`App::want_capture`] и начать звук
+    /// заново с текущего момента (без щелчков и скачков от накопленного).
     fn sync_sound_capture(&mut self) {
-        let on = self.audio.is_available() && self.audio.enabled();
+        let on = self.want_capture();
         self.m.set_sound_capture(on);
-        self.audio
-            .resync(self.m.master_ticks(), self.m.tape_out_level());
+        self.capturing = on;
+        self.resync_audio();
+    }
+
+    fn resync_audio(&mut self) {
+        self.resync_at = self.m.master_ticks();
+        self.audio.resync(self.resync_at, self.m.tape_out_level());
     }
 
     /// Заменить машину (холодный старт, снимок, смена конфигурации).
@@ -218,6 +291,7 @@ impl App {
         self.dbg.run_to = None;
         self.dbg.stop_reason = None;
         self.dbg.mark_cycles = self.m.cycles();
+        self.tex_phosphor = None;
         self.sync_sound_capture();
     }
 
@@ -533,25 +607,26 @@ impl App {
         self.dbg.skip_once = true;
         self.dbg.stop_reason = None;
         self.last_tick = Instant::now();
-        self.audio
-            .resync(self.m.master_ticks(), self.m.tape_out_level());
+        self.resync_audio();
         self.say("Выполнение");
     }
 
     /// Прогнать эмуляцию за прошедшее реальное время.
     fn emulate(&mut self) {
         let now = Instant::now();
-        let dt = now
-            .duration_since(self.last_tick)
-            .min(Duration::from_millis(100));
+        let frame = now.duration_since(self.last_tick);
+        let dt = frame.min(Duration::from_millis(100));
         self.last_tick = now;
+        if self.capturing != self.want_capture() {
+            // Переход на «максимум» и обратно, включение и выключение звука.
+            self.sync_sound_capture();
+        }
         if self.paused {
             self.apply_holds();
             return;
         }
         let start_cycles = self.m.cycles();
         let wall_start = Instant::now();
-        let budget = Duration::from_millis(30);
         match self.speed.factor() {
             Some(k) => {
                 self.debt += dt.as_secs_f64() * CPU_HZ * k;
@@ -566,7 +641,7 @@ impl App {
                         self.dbg.open = true;
                         break;
                     }
-                    if wall_start.elapsed() > budget {
+                    if wall_start.elapsed() > SPEED_BUDGET {
                         // Не успеваем — отбрасываем долг, чтобы окно не зависло.
                         self.debt = 0.0;
                         break;
@@ -574,13 +649,28 @@ impl App {
                 }
             }
             None => {
-                while wall_start.elapsed() < budget {
+                self.max_budget = next_max_budget(self.max_budget, frame);
+                while wall_start.elapsed() < self.max_budget {
                     self.apply_holds();
-                    if let Some(r) = self.dbg.run(&mut self.m, FRAME_CYCLES) {
+                    // Крупные порции — когда не нужны покомандные проверки отладчика и
+                    // не держатся клавиши (их удержание отмеряется кадрами, как на ×1).
+                    let n = if self.holds.is_empty() && !self.dbg.active() {
+                        self.max_chunk
+                    } else {
+                        FRAME_CYCLES
+                    };
+                    if let Some(r) = self.dbg.run(&mut self.m, n) {
                         self.pause(&r);
                         self.dbg.open = true;
                         break;
                     }
+                }
+                // Порция — около миллисекунды при достигнутой скорости.
+                let secs = wall_start.elapsed().as_secs_f64();
+                if secs > 0.0 {
+                    let rate = (self.m.cycles() - start_cycles) as f64 / secs;
+                    self.max_chunk = ((rate / 1000.0) as u64)
+                        .clamp(FRAME_CYCLES, MAX_CHUNK_FRAMES * FRAME_CYCLES);
                 }
             }
         }
@@ -590,11 +680,9 @@ impl App {
             let inst = ran / CPU_HZ / dt.as_secs_f64();
             self.actual_speed = self.actual_speed * 0.9 + inst * 0.1;
         }
-        let edges = self.m.drain_sound_edges();
-        if self.speed == Speed::MAX {
-            self.audio
-                .resync(self.m.master_ticks(), self.m.tape_out_level());
-        } else {
+        // На «максимуме» и без звука перепады не собираются (буфер пуст).
+        if self.capturing {
+            let edges = self.m.drain_sound_edges();
             self.audio.set_speed(self.speed.factor());
             self.audio.push_edges(&edges, self.m.master_ticks());
         }
@@ -1463,7 +1551,20 @@ impl App {
         }
     }
 
+    /// Обновить текстуру экрана и сегменты индикаторов — только если они изменились
+    /// (не чаще кадра окна).
     fn update_screen_texture(&mut self, ctx: &egui::Context) {
+        if self.m.take_indicators_changed() {
+            self.segs = self.m.indicator_segments();
+        }
+        let changed = self.m.take_screen_changed();
+        if !changed
+            && self.tex_phosphor == Some(self.phosphor)
+            && (self.screen_tex.is_some() || !self.has_display())
+        {
+            return;
+        }
+        self.tex_phosphor = Some(self.phosphor);
         let (fg, bg) = self.phosphor.colors();
         if !self.m.render_screen(&mut self.screen_buf, fg, bg) {
             self.screen_tex = None;
@@ -1488,7 +1589,7 @@ impl App {
         let painter = ui.painter_at(rect);
         // Стол.
         painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2A, 0x2E));
-        let segs = self.m.indicator_segments();
+        let segs = self.segs;
         let mut hits = Hits::default();
         let pressed = PressedView(&self.holds);
         if self.has_display() {
