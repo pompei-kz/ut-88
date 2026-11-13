@@ -316,14 +316,15 @@ The map (`-m`) lists where everything went:
 The examples live in `examples/asm/`; every file starts with a comment (in Russian)
 saying what it does and how to build and run it.
 
-| File                                          | Configuration | What it does                                                                                  |
-|-----------------------------------------------|---------------|-----------------------------------------------------------------------------------------------|
-| `ones.asm`                                    | minimal       | the first program of the magazine: «11» on all six LEDs, then `RST 0` to the MONITOR          |
-| `fill.asm`                                    | minimal       | fill memory with a constant (magazine 1989-02) — byte-for-byte `programs/fill-const.bin`      |
-| `gamma.asm`                                   | minimal       | «Гамма», a musical scale — byte-for-byte `programs/gamma.bin`, source recovered from the dump |
-| `hello.asm`                                   | full          | print two lines through MONITOR-F F809H, return to MONITOR-F (F86CH)                          |
-| `macro.asm`                                   | minimal       | macros with `LOCAL`, `REPT`, `IF`/`IFDEF`: sum of squares on the LEDs                         |
-| `hello-link/main.asm`, `hello-link/print.asm` | full          | two modules with `PUBLIC`/`EXTRN`, `CSEG`/`DSEG`, linked at 3000H                             |
+| File                                          | Configuration | What it does                                                                                                                            |
+|-----------------------------------------------|---------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `ones.asm`                                    | minimal       | the first program of the magazine: «11» on all six LEDs, then `RST 0` to the MONITOR                                                    |
+| `fill.asm`                                    | minimal       | fill memory with a constant (magazine 1989-02) — byte-for-byte `programs/fill-const.bin`                                                |
+| `gamma.asm`                                   | minimal       | «Гамма», a musical scale — byte-for-byte `programs/gamma.bin`, source recovered from the dump                                           |
+| `hello.asm`                                   | full          | print two lines through MONITOR-F F809H, return to MONITOR-F (F86CH)                                                                    |
+| `draw.asm`                                    | full          | drawing straight into the screen RAM (E800H + row × 40H + column): frame, diagonals, inverse box, caption; any key returns to MONITOR-F |
+| `macro.asm`                                   | minimal       | macros with `LOCAL`, `REPT`, `IF`/`IFDEF`: sum of squares on the LEDs                                                                   |
+| `hello-link/main.asm`, `hello-link/print.asm` | full          | two modules with `PUBLIC`/`EXTRN`, `CSEG`/`DSEG`, linked at 3000H                                                                       |
 
 | Command                                           | What it does                                                     |
 |---------------------------------------------------|------------------------------------------------------------------|
