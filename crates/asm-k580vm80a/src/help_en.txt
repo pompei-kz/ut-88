@@ -1,0 +1,238 @@
+asm-k580vm80a — assembler for the КР580ВМ80А (Intel 8080) CPU of the UT-88 computer
+
+USAGE
+
+  asm-k580vm80a -f INPUT.asm -o OUTPUT [-t bin|hex|ihex|link] [-l LISTING.lst]
+                [-D NAME[=VALUE]]... [-I DIR]... [--fill XX] [--charset koi7|ascii]
+                [--base ADDRESS]
+  asm-k580vm80a -h      detailed help in Russian
+  asm-k580vm80a -he     this help (in English)
+  asm-k580vm80a -V      version
+
+OPTIONS
+
+  -f FILE        source file (required), UTF-8.
+                   asm-k580vm80a -f hello.asm -o hello.hex
+  -o FILE        output file (required). Not created if assembly fails.
+  -t TYPE        output type: bin, hex, ihex, link. When given, the extension of the
+                 -o file name does not matter.
+                   asm-k580vm80a -f hello.asm -o hello.txt -t hex
+                   asm-k580vm80a -f rom.asm -o rom.img -t bin
+  -l FILE        listing: address, codes, source line, symbol table (in development).
+  -D NAME[=VAL]  define a symbol, like EQU at the top of the source. Without a value
+                 it is 1. The value is a number in assembler notation (0C000H, 10, -1,
+                 $FF).
+                   asm-k580vm80a -f prog.asm -o prog.bin -D DEBUG -D BASE=0C000H
+  -I DIR         search directory for INCBIN (and INCLUDE) files, may be repeated.
+                 The directory of the source file is searched first, then the -I
+                 directories in order.
+                   asm-k580vm80a -f game.asm -o game.hex -I data -I ../common
+  --fill XX      filler byte for gaps in bin output (hexadecimal, default 00).
+                   asm-k580vm80a -f rom.asm -o rom.bin --fill FF
+  --charset CS   encoding of strings and character constants: koi7 (default) or
+                 ascii.
+  --base ADDR    start address of the CSEG segment when assembling directly to
+                 bin/hex/ihex (hexadecimal, default 0000); DSEG follows CSEG.
+                   asm-k580vm80a -f prog.asm -o prog.hex --base C000
+  -h, -he, -V    help in Russian, in English, version.
+
+  Running without arguments prints a short hint.
+  Exit code: 0 — success, 1 — assembly errors, 2 — command line error.
+
+CHOOSING THE OUTPUT FORMAT
+
+  Without -t the type is taken from the extension of the -o file name:
+
+    .bin, .rom     bin  — flat memory image
+    .hex           hex  — dump as printed in the magazine «ЮТ для умелых рук»
+    .ihx, .ihex    ihex — Intel HEX
+    .link          link — object file for the linker (in development)
+
+  Any other extension without -t is an error. -t always wins over the extension:
+    -o prog.bin -t hex   writes a text dump into prog.bin.
+
+OUTPUT FILE FORMATS
+
+  bin   bytes from the lowest to the highest used address; gaps (ORG forward, DS
+        without a filler) are filled with the --fill byte (00). The load address is
+        not stored in the file — you have to know it (usually the first ORG).
+  hex   text dump as in the magazine and in monitor/monitor.hex — the emulator
+        loads it:
+          C000 31 EE C3 3E 11 C3 3B 00 C3 00 01 F7 EB C3 7D 00
+          C010 D5 AF
+        An address (4 hex digits) and up to 16 bytes; lines start on a 16-byte
+        boundary, gaps in memory are not filled (a new line with a new address).
+  ihex  Intel HEX: type 00 records (data, up to 16 bytes, on 16-byte boundaries),
+        a type 03 record with the start address from END (if given), and a type 01
+        record (end of file).
+          :09C000003E112100C0EFC306C08F
+          :040000030000C00039      (start address C000H)
+          :00000001FF
+
+LINE SYNTAX
+
+  [label[:]]  [mnemonic|directive  [operands]]  [; comment]
+
+  * A label is a name followed by a colon anywhere on the line, or a name without a
+    colon starting in the first column. A name before EQU and SET is a label even
+    if the line is indented.
+  * Names: Latin letters, digits, _ ? @ . ; the first one is not a digit. Case does
+    not matter in mnemonics, registers, directives and NAMES: Loop, LOOP and loop
+    are the same name.
+  * Reserved, cannot be names: registers A B C D E H L M SP PSW and operator words
+    MOD SHL SHR AND OR XOR NOT EQ NE LT LE GT GE HIGH LOW.
+  * Operands are separated by commas; a comment runs from «;» to the end of the line
+    (except «;» inside quotes).
+
+    START:  LXI   SP,0C3EEH     ; top of stack
+    LOOP    DCR   B             ; label without a colon in the first column
+            JNZ   LOOP
+    COUNT   EQU   10
+
+NUMBERS
+
+  0C000H, 0FFh     hexadecimal with the H suffix (must start with a digit: 0FFH)
+  0x1F, $1F        hexadecimal with a prefix
+  1010B            binary
+  17O, 17Q         octal
+  99, 99D          decimal
+  'A', 'AB'        character constants: the character code; two characters make a
+                   word (the first is the high byte), 'Я' — code in the --charset
+                   encoding
+  $                address of the start of the current line (instruction or
+                   directive)
+
+EXPRESSIONS
+
+  Operators by decreasing precedence:
+
+    ( )                          parentheses
+    + - HIGH LOW                 unary plus, minus, high/low byte
+    * / MOD SHL SHR              multiply, divide, remainder, shifts
+    + -                          add, subtract
+    EQ NE LT LE GT GE            comparisons, also = <> < <= > >=
+                                 (true is 0FFFFH, false is 0)
+    NOT                          bitwise NOT
+    AND                          bitwise AND
+    OR XOR                       bitwise OR, exclusive OR
+
+  Integer arithmetic. A byte operand accepts -256…255 (negative values are taken
+  modulo 256: -1 = 0FFH, NOT 80H = 7FH), a word operand -65535…65535.
+
+    MVI   A,HIGH (TABLE+10)
+    LXI   H,BUF+2*SIZE
+    CPI   'Z'+1
+    ANI   NOT 80H
+    DB    (END_ADDR-START) MOD 256
+
+RELOCATABLE VALUES
+
+  The address of a label in CSEG or DSEG and an external symbol (EXTRN) are
+  relocatable: their final value is known only after placement. Allowed:
+    label ± constant, constant + label            (relocatable)
+    label1 - label2 from the same segment         (absolute — a distance)
+    HIGH label, LOW label                         (a byte of a relocatable address)
+    comparison of two labels of the same segment
+  Anything else (multiplication, NOT, sum of two labels, -label, HIGH label + 1 …)
+  is the error «выражение нельзя переместить» (expression cannot be relocated).
+  Labels in ASEG (and outside segments) are absolute.
+
+DIRECTIVES
+
+  ORG address            address of the following bytes (in CSEG/DSEG — offset from
+                         the segment start). The value must be known (no forward
+                         references).
+                           ORG 0C000H
+  name EQU expression    constant symbol; cannot be redefined.
+                           SCREEN  EQU 0E800H
+  name SET expression    redefinable symbol.
+                           N SET 0
+                           N SET N+1
+  DB expr|'string',...   bytes; strings in '…' or "…" (double the quote inside:
+  DEFB                   'It''s'). Russian letters use the --charset encoding.
+                           MSG: DB 'ПРИВЕТ', 0DH, 0AH, 0
+                                DB 'A'+80H, LOW ADDR, HIGH ADDR
+  DW expr,...            words (16 bits, low byte first).
+  DEFW                     TABLE: DW START, LOOP, 0
+  DS n[,filler]          reserve n bytes; with a filler — n equal bytes. Without a
+  DEFS                   filler the space is filled with --fill in bin and skipped in
+                         hex/ihex.
+                           BUF: DS 64
+                                DS 16, 0FFH
+  END [address]          end of the source (nothing after it is read); the address is
+                         the start address (record 03 in Intel HEX).
+                           END START
+  INCBIN "file"          insert the bytes of a file as is (searched like -I).
+                           FONT: INCBIN "font.bin"
+  CSEG                   code segment (relocatable).
+  DSEG                   data segment (relocatable).
+  ASEG                   absolute segment — addresses set by ORG (the default).
+                         Each segment has its own location counter; you may switch
+                         between them any number of times. When assembling directly
+                         to bin/hex/ihex CSEG is placed at --base (0000), DSEG right
+                         after it.
+                           CSEG
+                           START: LXI H,BUF
+                           DSEG
+                           BUF:   DS 10
+  NAME name              module name (for object files).
+  PUBLIC name,...        export symbols to other modules (synonym GLOBAL).
+  EXTRN name,...         symbols from other modules (synonym EXTERN). When
+                         assembling directly to bin/hex/ihex a reference to an EXTRN
+                         symbol is an error: such programs are assembled to .link
+                         files and linked.
+
+  In development (preprocessor): INCLUDE "file", IF/ELSE/ENDIF, IFDEF/IFNDEF,
+  MACRO/ENDM, LOCAL, REPT/ENDM.
+
+STRING ENCODING
+
+  koi7 (default) — KOI-7 of the UT-88, as in the character generator of the display
+  module:
+    20H–5FH as in ASCII (space, digits, punctuation, Latin capitals);
+    60H–7EH Russian letters Ю А Б Ц Д Е Ф Г Х И Й К Л М Н О П Я Р С Т У Ж В Ь Ы З Ш Э Щ Ч
+    (lowercase Russian letters get the same codes, Ё = Е; there is no Ъ — error);
+    lowercase Latin letters keep their ASCII codes 61H–7AH (shown as Russian
+    letters on the UT-88 screen).
+  ascii — ASCII only, Russian letters are an error.
+
+КР580ВМ80А INSTRUCTIONS
+
+  r — register B C D E H L M A (M — memory at address HL); rp — pair B (BC), D (DE),
+  H (HL), SP; d8 — byte; d16/a16 — word/address; port — port number 0–255.
+
+  Data moves:  MOV r,r   MVI r,d8   LXI rp,d16   LDA a16   STA a16   LHLD a16
+               SHLD a16  LDAX B|D   STAX B|D     XCHG
+  Arithmetic:  ADD r  ADC r  SUB r  SBB r  ADI d8  ACI d8  SUI d8  SBI d8
+               INR r  DCR r  INX rp  DCX rp  DAD rp  DAA
+  Logic:       ANA r  XRA r  ORA r  CMP r  ANI d8  XRI d8  ORI d8  CPI d8
+               RLC  RRC  RAL  RAR  CMA  CMC  STC
+  Branches:    JMP a16  JNZ JZ JNC JC JPO JPE JP JM a16
+               CALL a16 CNZ CZ CNC CC CPO CPE CP CM a16
+               RET  RNZ RZ RNC RC RPO RPE RP RM   RST 0…7   PCHL
+  Stack:       PUSH B|D|H|PSW   POP B|D|H|PSW   XTHL   SPHL
+  I/O:         IN port   OUT port
+  Control:     EI  DI  HLT  NOP
+
+  There is no MOV M,M (that code is HLT). 244 codes in total; undocumented codes
+  are not assembled.
+
+ERROR MESSAGES
+
+  file:line:column: ошибка: text
+    hello.asm:12:9: ошибка: неизвестный символ PRNT
+  Messages are in Russian. The output file is not created when there are errors.
+
+EXAMPLE PROGRAM
+
+  ; «11» on the LED display of module 1 (MONITOR in ROM at 0000H)
+          ORG   0C000H
+  START:  MVI   A,11H           ; what to show
+          LXI   H,0C000H        ; value for the address digits
+          RST   5               ; output to the display
+  STOP:   JMP   STOP
+          END   START
+
+    asm-k580vm80a -f eleven.asm -o eleven.hex
+    asm-k580vm80a -f eleven.asm -o eleven.bin
+    asm-k580vm80a -f eleven.asm -o eleven.ihx

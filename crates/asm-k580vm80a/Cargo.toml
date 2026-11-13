@@ -1,0 +1,24 @@
+[package]
+name = "asm-k580vm80a"
+description = "Ассемблер КР580ВМ80А (Intel 8080) для ЮТ-88: bin, дамп журнала, Intel HEX"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "asm-k580vm80a"
+path = "src/bin/asm.rs"
+
+[dependencies]
+clap = "4"
+
+[dev-dependencies]
+i8080 = { path = "../i8080" }
