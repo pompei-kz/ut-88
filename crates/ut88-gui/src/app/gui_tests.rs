@@ -42,13 +42,32 @@ impl Win {
     /// Окно с готовой машиной и скоростью.
     fn with_machine(name: &str, machine: Machine, speed: Speed) -> Self {
         let dir = tmp_dir(name);
+        let cfg = dir.join("config");
+        Self::launch(dir, machine, speed, false, cfg)
+    }
+
+    /// Окно мини-конфигурации с ключом звука `sound` (`false` — как `--no-sound`) и
+    /// папкой настроек `cfg`; `name` — имя временной папки теста.
+    fn with_settings(name: &str, sound: bool, cfg: &Path) -> Self {
+        let dir = tmp_dir(name);
+        Self::launch(
+            dir,
+            Machine::new(Config::minimal()),
+            Speed::X1,
+            sound,
+            cfg.to_path_buf(),
+        )
+    }
+
+    fn launch(dir: PathBuf, machine: Machine, speed: Speed, sound: bool, cfg: PathBuf) -> Self {
         let dlg = ScriptedDialogs::default();
         let opts = GuiOptions {
             machine,
             speed,
-            sound: false,
+            sound,
             programs_dir: Some(programs_dir()),
             kvazidisk_file: None,
+            settings_dir: Some(cfg),
         };
         let d2 = dlg.clone();
         let quick = dir.join("quick.snap");
@@ -668,6 +687,90 @@ fn view_and_help_menus() {
     w.menu("Справка", "О программе");
     assert!(w.has("О программе"));
     assert!(w.has("Эмулятор микро-ЭВМ «ЮТ-88»"));
+}
+
+/// Громкость меняется ползунком в меню «Вид» (стрелками с клавиатуры).
+fn volume_down(w: &mut Win, steps: usize) {
+    w.click("Вид");
+    let slider = w.h.get_by_role(egui::accesskit::Role::Slider);
+    slider.focus();
+    w.settle();
+    for _ in 0..steps {
+        w.h.key_press(egui::Key::ArrowLeft);
+        w.settle();
+    }
+    w.key(egui::Key::Escape);
+}
+
+#[test]
+fn volume_saved_and_applied_on_next_start() {
+    let cfg = tmp_dir("volume-cfg").join("ut-88");
+    {
+        // Первый запуск: файлов нет — громкость по умолчанию, ничего не записано.
+        let mut w = Win::with_settings("volume-1", false, &cfg);
+        assert_eq!(w.app().audio.volume(), Settings::default().volume);
+        assert!(!cfg.exists());
+        volume_down(&mut w, 3);
+        let v = w.app().audio.volume();
+        assert!(v < Settings::default().volume, "{v}");
+        // Записано сразу, без выхода из программы.
+        let text = std::fs::read_to_string(cfg.join(settings::VOLUME_FILE)).unwrap();
+        assert_eq!(text, settings::volume_text(v));
+        // --no-sound не записывает sound.txt.
+        assert!(!cfg.join(settings::SOUND_FILE).exists());
+    }
+    // Второй запуск: громкость из файла.
+    let w = Win::with_settings("volume-2", false, &cfg);
+    let v =
+        settings::parse_volume(&std::fs::read_to_string(cfg.join(settings::VOLUME_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(w.app().audio.volume(), v);
+    drop(w);
+    let _ = std::fs::remove_dir_all(cfg.parent().unwrap());
+}
+
+#[test]
+fn no_sound_key_keeps_saved_sound() {
+    let cfg = tmp_dir("nosound-cfg");
+    settings::save_sound(&cfg, true).unwrap();
+    {
+        // --no-sound: звук выключен на этот запуск, sound.txt не тронут.
+        let mut w = Win::with_settings("nosound-1", false, &cfg);
+        assert!(!w.app().sound_wanted);
+        volume_down(&mut w, 1);
+        eframe::App::on_exit(w.app_mut(), None);
+        assert_eq!(
+            std::fs::read_to_string(cfg.join(settings::SOUND_FILE)).unwrap(),
+            "on\n"
+        );
+    }
+    // sound.txt = off: запуск без --no-sound начинается без звука (звуковая карта не
+    // открывается); включение в меню сразу записывает on.
+    settings::save_sound(&cfg, false).unwrap();
+    let mut w = Win::with_settings("nosound-2", true, &cfg);
+    assert!(!w.app().sound_wanted);
+    assert!(!w.app().audio.is_available());
+    w.menu("Вид", "Звук");
+    w.click("OK");
+    assert!(w.app().sound_wanted);
+    assert_eq!(
+        std::fs::read_to_string(cfg.join(settings::SOUND_FILE)).unwrap(),
+        "on\n"
+    );
+    drop(w);
+    let _ = std::fs::remove_dir_all(&cfg);
+}
+
+#[test]
+fn broken_settings_use_defaults() {
+    let cfg = tmp_dir("broken-cfg");
+    std::fs::write(cfg.join(settings::VOLUME_FILE), "громко").unwrap();
+    std::fs::write(cfg.join(settings::SOUND_FILE), "может быть").unwrap();
+    let w = Win::with_settings("broken", false, &cfg);
+    assert_eq!(w.app().audio.volume(), Settings::default().volume);
+    assert!(w.status().contains("по умолчанию"), "{}", w.status());
+    drop(w);
+    let _ = std::fs::remove_dir_all(&cfg);
 }
 
 // ------------------------------------------------------------------ CP/M
