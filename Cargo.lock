@@ -306,6 +306,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "i8080",
+ "ut88-core",
 ]
 
 [[package]]

@@ -26,3 +26,4 @@ clap = "4"
 
 [dev-dependencies]
 i8080 = { path = "../i8080" }
+ut88-core = { path = "../ut88-core" }
