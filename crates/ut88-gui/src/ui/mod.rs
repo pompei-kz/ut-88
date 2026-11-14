@@ -1,6 +1,6 @@
 //! Свой набор виджетов в немедленном режиме (immediate mode) поверх холста [`Canvas`].
 //!
-//! API повторяет используемое окном подмножество egui: [`Ui::label`], [`Ui::button`],
+//! Набор виджетов, нужный окну эмулятора: [`Ui::label`], [`Ui::button`],
 //! [`Ui::checkbox`], [`Ui::radio_value`], [`Slider`], [`TextEdit`], [`ComboBox`], [`Grid`],
 //! [`ScrollArea`], меню ([`MenuBar`], [`Ui::menu_button`]), панели ([`TopBottomPanel`],
 //! [`CentralPanel`]) и плавающие окна ([`Window`]).
@@ -86,7 +86,7 @@ impl Id {
     }
 }
 
-/// Порядок слоя (как `egui::Order`).
+/// Порядок слоя.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Order {
     /// Фон: панели и центральная панель.
@@ -187,7 +187,7 @@ impl Sense {
 
 // ------------------------------------------------------------------ ответ виджета
 
-/// Результат взаимодействия с виджетом за кадр (как `egui::Response`).
+/// Результат взаимодействия с виджетом за кадр.
 #[derive(Clone)]
 pub struct Response {
     /// Id виджета.
@@ -309,7 +309,7 @@ pub struct InnerResponse<R> {
 
 // ------------------------------------------------------------------ текст
 
-/// Начертание текста (как `egui::TextStyle`).
+/// Начертание текста.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TextStyle {
     /// Мелкий.
@@ -337,7 +337,7 @@ impl TextStyle {
     }
 }
 
-/// Текст с оформлением (как `egui::RichText`).
+/// Текст с оформлением.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RichText {
     text: String,
@@ -1004,7 +1004,7 @@ pub struct FrameOutput {
     pub wants_keyboard_input: bool,
 }
 
-/// Контекст набора виджетов (как `egui::Context`): дешёвый в копировании указатель на
+/// Контекст набора виджетов : дешёвый в копировании указатель на
 /// общее состояние. Владеет холстом кадра.
 #[derive(Clone)]
 pub struct Ctx(Rc<RefCell<State>>);
@@ -1302,7 +1302,7 @@ impl Ctx {
         self.st().focus = None;
     }
 
-    /// Щёлкнуть виджет `id` в следующем кадре без мыши (как действие AccessKit).
+    /// Щёлкнуть виджет `id` в следующем кадре без мыши (как действие экранного диктора).
     pub fn queue_click(&self, id: Id) {
         self.st().pending_click = Some(id);
     }

@@ -150,7 +150,7 @@ impl ScrollBody {
     }
 }
 
-/// Область вертикальной прокрутки (как `egui::ScrollArea::vertical`).
+/// Область вертикальной прокрутки.
 pub struct ScrollArea {
     salt: Option<Id>,
     max_height: f32,

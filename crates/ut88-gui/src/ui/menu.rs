@@ -14,7 +14,7 @@ use super::layout::{MenuCtx, Ui};
 use super::registry::WidgetKind;
 use super::{Ctx, Id, InnerResponse, LayerId, Order, RichText, Sense, Shape};
 
-/// Строка меню (как `egui::MenuBar`).
+/// Строка меню.
 #[derive(Debug, Default)]
 pub struct MenuBar;
 
@@ -245,7 +245,7 @@ impl Ui {
     }
 }
 
-/// Выпадающий список (как `egui::ComboBox`): кнопка с выбранным значением, по нажатию —
+/// Выпадающий список: кнопка с выбранным значением, по нажатию —
 /// список пунктов ([`Ui::selectable_value`]); выбор закрывает список.
 pub struct ComboBox {
     salt: Id,

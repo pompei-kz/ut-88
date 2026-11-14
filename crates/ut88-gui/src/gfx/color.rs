@@ -2,9 +2,8 @@
 
 /// Цвет sRGB с прозрачностью **без** предварительного умножения на альфу.
 ///
-/// Аналог `egui::Color32`; конструкторы названы так же (`from_rgb`, `from_gray`,
-/// `from_black_alpha`, …), значения констант совпадают с egui. В отличие от egui цвет
-/// хранится без умножения на альфу — умножение делается при рисовании.
+/// Конструкторы: `rgb`/`from_rgb`, `from_gray`, `from_black_alpha` и т. п.; цвет хранится
+/// без умножения на альфу — умножение делается при рисовании.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Color {
     /// Красный.
@@ -67,13 +66,13 @@ impl Color {
         Color { r, g, b, a }
     }
 
-    /// То же, что [`Color::rgb`] (имя из egui).
+    /// То же, что [`Color::rgb`].
     #[inline]
     pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
         Color::rgb(r, g, b)
     }
 
-    /// То же, что [`Color::rgba`] (имя из egui).
+    /// То же, что [`Color::rgba`].
     #[inline]
     pub const fn from_rgba_unmultiplied(r: u8, g: u8, b: u8, a: u8) -> Self {
         Color::rgba(r, g, b, a)
@@ -127,7 +126,7 @@ impl Color {
         Color::rgba(self.r, self.g, self.b, a)
     }
 
-    /// Умножить непрозрачность на `k` (0..=1); аналог `egui::Color32::gamma_multiply`.
+    /// Умножить непрозрачность на `k` (0..=1).
     #[inline]
     pub fn gamma_multiply(self, k: f32) -> Self {
         let a = (self.a as f32 * k.clamp(0.0, 1.0)).round() as u8;

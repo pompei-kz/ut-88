@@ -1,4 +1,4 @@
-//! Однострочное поле ввода (как `egui::TextEdit::singleline`).
+//! Однострочное поле ввода.
 
 use crate::gfx::{Color, Rect, pos2, vec2};
 

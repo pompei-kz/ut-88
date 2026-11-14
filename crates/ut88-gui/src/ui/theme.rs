@@ -1,4 +1,4 @@
-//! Тема: цвета и размеры виджетов (тёмная, близкая к `egui::Visuals::dark()` 0.33).
+//! Тема: цвета и размеры виджетов (тёмная, близкая к прежнему виду окна).
 
 use crate::gfx::{Color, Vec2, vec2};
 
@@ -123,7 +123,7 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// Тёмная тема (значения `egui::Visuals::dark()` и `egui::Spacing::default()`).
+    /// Тёмная тема (цвета и отступы прежнего вида окна).
     pub fn dark() -> Self {
         let g = Color::from_gray;
         Theme {

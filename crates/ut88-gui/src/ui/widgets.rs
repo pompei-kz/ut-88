@@ -10,7 +10,7 @@ use super::registry::WidgetKind;
 use super::text;
 use super::{KeyCode, Response, RichText, Sense, Shape, WidgetVisuals};
 
-/// Виджет, который можно добавить через [`Ui::add`] (как `egui::Widget`).
+/// Виджет, который можно добавить через [`Ui::add`].
 pub trait Widget {
     /// Разместить, обработать ввод, нарисовать.
     fn ui(self, ui: &mut Ui) -> Response;
@@ -198,7 +198,7 @@ impl Ui {
         }
     }
 
-    /// То же, что [`Ui::close`] (старое имя egui).
+    /// То же, что [`Ui::close`] (старое имя).
     pub fn close_menu(&mut self) {
         self.close();
     }
@@ -206,7 +206,7 @@ impl Ui {
 
 // ------------------------------------------------------------------ подпись
 
-/// Подпись (как `egui::Label`). В столбце длинный текст переносится по словам; `'\n'`
+/// Подпись. В столбце длинный текст переносится по словам; `'\n'`
 /// начинает новую строку.
 pub struct Label {
     text: RichText,
@@ -267,7 +267,7 @@ impl Widget for Label {
 
 // ------------------------------------------------------------------ кнопка
 
-/// Кнопка (как `egui::Button`). В выпадающем меню — пункт меню во всю ширину без рамки.
+/// Кнопка. В выпадающем меню — пункт меню во всю ширину без рамки.
 pub struct Button {
     text: RichText,
     small: bool,
@@ -397,7 +397,7 @@ impl Widget for Button {
 
 // ------------------------------------------------------------------ флажок и переключатель
 
-/// Флажок (как `egui::Checkbox`).
+/// Флажок.
 pub struct Checkbox<'a> {
     checked: &'a mut bool,
     text: RichText,
@@ -481,7 +481,7 @@ impl Widget for Checkbox<'_> {
     }
 }
 
-/// Переключатель (как `egui::RadioButton`).
+/// Переключатель.
 pub struct RadioButton {
     selected: bool,
     text: RichText,
@@ -538,7 +538,7 @@ impl Widget for RadioButton {
 
 // ------------------------------------------------------------------ разделитель
 
-/// Разделитель (как `egui::Separator`).
+/// Разделитель.
 #[derive(Default)]
 pub struct Separator;
 
@@ -576,7 +576,7 @@ macro_rules! numeric {
 
 numeric!(f32: false, f64: false, i32: true, i64: true, u8: true, u16: true, u32: true, usize: true);
 
-/// Ползунок с полем значения и подписью (как `egui::Slider`). Мышью — щелчок и
+/// Ползунок с полем значения и подписью. Мышью — щелчок и
 /// перетаскивание; в фокусе — стрелки (шаг 1/100 диапазона или `step_by`), Home, End.
 pub struct Slider<'a> {
     get_set: Box<dyn FnMut(Option<f64>) -> f64 + 'a>,

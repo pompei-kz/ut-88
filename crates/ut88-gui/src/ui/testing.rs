@@ -167,7 +167,7 @@ impl<S> Harness<S> {
     }
 
     /// Щёлкнуть виджет: мышью по центру видимой части, если он там верхний; иначе
-    /// (прокручен за край, перекрыт) — «без мыши», как действие AccessKit.
+    /// (прокручен за край, перекрыт) — «без мыши», как действие экранного диктора.
     pub fn click_widget(&mut self, w: &WidgetInfo) {
         let p = Registry::click_point(w);
         let on_top = p.is_some_and(|p| self.ctx.layer_id_at(p).is_none_or(|l| l == w.layer));
