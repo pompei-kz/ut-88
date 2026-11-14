@@ -1,5 +1,26 @@
 # Эмулятор ЮТ-88. Справка: make help
 
+# BASH_EXE — чем запускать скрипты scripts/*.sh. В Linux и в Git Bash это bash из PATH.
+# В Windows вне Git Bash (PowerShell, cmd) bash из PATH — это WSL
+# (C:\Windows\System32\bash.exe), а make запускает скрипт сам и спотыкается о строку
+# «#!/usr/bin/env bash». Поэтому там берётся bash из Git для Windows, он же становится
+# оболочкой рецептов. Корень Git вычисляется из `git --exec-path`
+# (…/Git/mingw64/libexec/git-core), так что место установки Git не важно; bin/bash.exe
+# из корня Git сам добавляет в PATH утилиты grep, awk и т. п.
+BASH_EXE := bash
+ifeq ($(OS),Windows_NT)
+ifndef MSYSTEM
+GIT_EXEC_PATH := $(subst \,/,$(shell git --exec-path))
+ifeq ($(GIT_EXEC_PATH),)
+$(error Не найден Git для Windows: установите его (https://git-scm.com/download/win) или запускайте make из Git Bash)
+endif
+GIT_ROOT := $(GIT_EXEC_PATH)
+$(foreach d,mingw64 ucrt64 clang64 clangarm64 mingw32,$(eval GIT_ROOT := $(subst /$(d)/libexec/git-core,,$(GIT_ROOT))))
+BASH_EXE := $(GIT_ROOT)/bin/bash.exe
+SHELL := $(BASH_EXE)
+endif
+endif
+
 BIN := target/release/ut88
 ASM := target/release/asm-k580vm80a
 LINK := target/release/link-k580vm80a
@@ -13,7 +34,7 @@ compile:
 
 ## Список команд
 help:
-	@scripts/make-help.sh
+	@"$(BASH_EXE)" scripts/make-help.sh
 
 ## Базовый вариант: модуль 1 (индикаторы и кнопки)
 base: compile
@@ -33,11 +54,11 @@ full-t: compile
 
 ## Игра «Тетрис»
 tetris: compile
-	scripts/run-program.sh tetris
+	"$(BASH_EXE)" scripts/run-program.sh tetris
 
 ## Игра «Тетрис» в терминале
 tetris-t: compile
-	scripts/run-program.sh tetris -t
+	"$(BASH_EXE)" scripts/run-program.sh tetris -t
 
 ## CP/M-64 с квазидиском (образ диска — ut88-disk.img)
 cpm: compile
@@ -57,15 +78,15 @@ os-t: compile
 
 ## Программа из programs/: make prog P=gamma
 prog: compile
-	scripts/run-program.sh $(P)
+	"$(BASH_EXE)" scripts/run-program.sh $(P)
 
 ## Программа из programs/ в терминале: make prog-t P=gamma
 prog-t: compile
-	scripts/run-program.sh $(P) -t
+	"$(BASH_EXE)" scripts/run-program.sh $(P) -t
 
 ## Список программ из programs/
 programs:
-	@scripts/run-program.sh --list
+	@"$(BASH_EXE)" scripts/run-program.sh --list
 
 ## Собрать программу на ассемблере: make asm F=файл.asm [O=файл.hex]
 asm: compile
@@ -73,11 +94,11 @@ asm: compile
 
 ## Собрать и запустить в эмуляторе: make asm-run F=файл.asm [C=minimal|full]
 asm-run: compile
-	scripts/asm-run.sh $(F) $(C)
+	"$(BASH_EXE)" scripts/asm-run.sh $(F) $(C)
 
 ## Собрать и загрузить, не запуская (запуск — G адрес): make asm-load F=файл.asm [C=full|minimal]
 asm-load: compile
-	NORUN=1 scripts/asm-run.sh $(F) $(or $(C),full)
+	NORUN=1 "$(BASH_EXE)" scripts/asm-run.sh $(F) $(or $(C),full)
 
 ## Скомпоновать модули: make link O=файл.hex M="a.link b.link" [B=адрес]
 link: compile
@@ -85,7 +106,7 @@ link: compile
 
 ## Собрать все примеры из examples/asm/
 asm-examples: compile
-	scripts/asm-examples.sh
+	"$(BASH_EXE)" scripts/asm-examples.sh
 
 ## Тесты
 test:
