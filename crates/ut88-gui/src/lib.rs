@@ -14,7 +14,9 @@ pub mod draw;
 pub mod gfx;
 pub mod keymap;
 pub mod loader;
+pub mod picture;
 pub mod settings;
+pub mod ui;
 
 use std::path::PathBuf;
 
