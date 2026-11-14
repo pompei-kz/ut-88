@@ -15,16 +15,16 @@ ut88-core = { path = "../ut88-core" }
 ut88-audio = { path = "../ut88-audio" }
 i8080 = { path = "../i8080" }
 anyhow = "1"
-eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 rfd = "0.15"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 ab_glyph = "0.2"
-# Коды клавиш для набора виджетов ui (окно создаётся в platform).
-winit = "0.30"
+# Окно и события (X11 и Wayland; на Wayland — свой заголовок окна adwaita).
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita"] }
+# Вывод кадра из памяти в окно без OpenGL.
+softbuffer = { version = "0.4", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 # Буфер обмена в полях ввода.
 arboard = { version = "3", default-features = false }
 
 [dev-dependencies]
-egui_kittest = { version = "0.33", features = ["eframe"] }
 # Запись PNG в примере picture_png; в основной бинарник не попадает (resolver 3).
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
