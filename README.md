@@ -11,7 +11,7 @@
 полная клавиатура), ОЗУ 64 Кбайт, электронный квазидиск и CP/M.
 
 Эмулятор выполняет оригинальные ПЗУ и программы, набранные со страниц журнала, — в окне
-(egui) или в терминале (ratatui).
+(winit + softbuffer, рисование на процессоре без OpenGL) или в терминале (ratatui).
 
 | Процессорный модуль (`make base`)                       | Полная конфигурация (`make full`)                  |
 |---------------------------------------------------------|----------------------------------------------------|
@@ -84,13 +84,13 @@
 - **GNU make** (команды ниже — цели `make`; каждая — тонкая обёртка над `cargo` и
   `target/release/ut88`).
 - **Системные библиотеки Linux** для окна и звука: для сборки нужны компилятор C,
-  `pkg-config` и пакет разработчика ALSA; X11 или Wayland, OpenGL и xkbcommon
-  подгружаются при запуске (они есть в любом рабочем окружении). Файловые диалоги
+  `pkg-config` и пакет разработчика ALSA; X11 или Wayland и xkbcommon подгружаются при
+  запуске (они есть в любом рабочем окружении), OpenGL не нужен. Файловые диалоги
   используют `xdg-desktop-portal`. В Debian / Ubuntu:
 
   ```sh
   sudo apt install build-essential pkg-config libasound2-dev \
-      libx11-6 libxcursor1 libxrandr2 libxi6 libxkbcommon-x11-0 libgl1 libwayland-client0
+      libx11-6 libxcursor1 libxrandr2 libxi6 libxkbcommon-x11-0 libwayland-client0
   ```
 
 Терминальному интерфейсу (цели `-t`) графика не нужна вовсе — только терминал размером
@@ -479,7 +479,7 @@ target/release/ut88 --snapshot ut88-quick.snap            # продолжить
 | `crates/i8080`         | эмулятор процессора КР580ВМ80А / Intel 8080 (проходит классические тесты 8080)       |
 | `crates/ut88-core`     | машина: карта памяти, устройства, дисплей, клавиатура, магнитофон, квазидиск, снимки |
 | `crates/ut88-audio`    | вывод звука (cpal)                                                                   |
-| `crates/ut88-gui`      | окно (egui / eframe)                                                                 |
+| `crates/ut88-gui`      | окно (winit + softbuffer, рисование tiny-skia, шрифты DejaVu внутри программы)       |
 | `crates/ut88-tui`      | терминальный интерфейс (ratatui)                                                     |
 | `crates/ut88`          | исполняемый файл `ut88` и его командная строка                                       |
 | `crates/asm-k580vm80a` | ассемблер `asm-k580vm80a` и компоновщик `link-k580vm80a`                             |
@@ -530,5 +530,8 @@ make clean      # cargo clean
 - Авторам тестовых программ 8080, на которых проверяется процессор: Microcosm Associates
   (Kelly Smith), Frank D. Cringle, Ian Bartholomew, SuperSoft Associates; и репозиторию
   Nicolas Allemand [superzazu/8080](https://github.com/superzazu/8080), откуда они взяты.
-- Проектам [egui](https://github.com/emilk/egui), [ratatui](https://ratatui.rs) и
-  [cpal](https://github.com/RustAudio/cpal).
+- Проектам [winit](https://github.com/rust-windowing/winit),
+  [softbuffer](https://github.com/rust-windowing/softbuffer),
+  [tiny-skia](https://github.com/linebender/tiny-skia), [ab_glyph](https://github.com/alexheretic/ab-glyph),
+  [ratatui](https://ratatui.rs) и [cpal](https://github.com/RustAudio/cpal); шрифтам
+  [DejaVu](https://dejavu-fonts.github.io).

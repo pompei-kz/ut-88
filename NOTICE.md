@@ -45,6 +45,12 @@ Research, адаптированную для ЮТ-88 так, как напеч�
 Digital Research и её правопреемников. Код CP/M 2.2 включён на тех же условиях, что и
 остальные материалы журнала.
 
+## Шрифты DejaVu (`crates/ut88-gui/assets/fonts/`)
+
+Шрифты DejaVu Sans и DejaVu Sans Mono вшиты в окно эмулятора. Они распространяются по
+лицензии Bitstream Vera / DejaVu (свободная, разрешает встраивание и распространение);
+полный текст — в [crates/ut88-gui/assets/fonts/LICENSE-DejaVu.txt](crates/ut88-gui/assets/fonts/LICENSE-DejaVu.txt).
+
 ## Тестовые программы 8080 (`crates/i8080/tests/roms/`)
 
 Классические тестовые программы CP/M для Intel 8080, используемые интеграционными
