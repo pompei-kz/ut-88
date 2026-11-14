@@ -104,8 +104,9 @@
 
 - **Git для Windows** — система контроля версий, через неё скачивается проект
   (`git clone`). В неё входит **Git Bash** — командная строка bash с привычными
-  утилитами (grep, awk и др.). Команды `make` запускаются именно в Git Bash: рецепты
-  `Makefile` вызывают bash-скрипты из `scripts/`.
+  утилитами (grep, awk и др.). Рецепты `Makefile` вызывают bash-скрипты из `scripts/`
+  и выполняются в bash из Git для Windows, поэтому `make` можно запускать и в
+  Git Bash, и в PowerShell или `cmd`.
   Скачать: <https://git-scm.com/download/win>.
 - **GNU make** — запускает команды проекта: `make base`, `make full`, `make tetris` и
   другие. Скачать: пакет [make](https://community.chocolatey.org/packages/make) для
@@ -126,8 +127,9 @@ PowerShell, **запущенном от имени администратора*
 choco install -y git make rustup.install visualstudio2022-workload-vctools
 ```
 
-После установки откройте **новое** окно Git Bash (в меню «Пуск» или правым щелчком в
-папке → «Open Git Bash here») и проверьте, что всё на месте:
+После установки откройте **новое** окно терминала — PowerShell или Git Bash (в меню
+«Пуск» или правым щелчком в папке → «Open Git Bash here») — и проверьте, что всё на
+месте:
 
 ```sh
 git --version
@@ -137,7 +139,7 @@ cargo --version
 
 ### Сборка и запуск
 
-В Git Bash:
+В PowerShell или Git Bash:
 
 ```sh
 git clone https://github.com/pompei-kz/ut-88.git
