@@ -100,6 +100,17 @@
 
 ## Запуск в Windows
 
+Ниже программы ставятся через `winget` или вручную. Если у вас
+[Chocolatey](https://chocolatey.org), всё нужное — инструменты сборки C++, Rust, Git и
+make — ставится одной командой в PowerShell, **запущенном от имени администратора**:
+
+```powershell
+choco install -y visualstudio2022-workload-vctools rustup.install git make
+```
+
+После этого откройте новое окно терминала и переходите сразу к шагу 3 (скачать проект),
+пропустив установку make в шаге 5.
+
 1. **Установите инструменты сборки C++ от Microsoft** — они нужны Rust для компоновки
    программ. Скачайте [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/),
    запустите установщик и отметьте рабочую нагрузку **«Разработка классических
@@ -138,6 +149,12 @@
 
    ```powershell
    winget install ezwinports.make
+   ```
+
+   или через Chocolatey (в PowerShell от имени администратора):
+
+   ```powershell
+   choco install make
    ```
 
    Откройте новое окно терминала и проверьте: `make --version`. Если у вас стоит
