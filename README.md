@@ -96,95 +96,57 @@
 Терминальному интерфейсу (цели `-t`) графика не нужна вовсе — только терминал размером
 не меньше 80×32 символов.
 
-В Windows системные библиотеки Linux не нужны — см. [Запуск в Windows](#запуск-в-windows).
+Что нужно установить в Windows — см. [Запуск в Windows](#запуск-в-windows).
 
 ## Запуск в Windows
 
-Ниже программы ставятся через `winget` или вручную. Если у вас
-[Chocolatey](https://chocolatey.org), всё нужное — инструменты сборки C++, Rust, Git и
-make — ставится одной командой в PowerShell, **запущенном от имени администратора**:
+### Что нужно установить
+
+- **Git для Windows** — система контроля версий, через неё скачивается проект
+  (`git clone`). В неё входит **Git Bash** — командная строка bash с привычными
+  утилитами (grep, awk и др.). Команды `make` запускаются именно в Git Bash: рецепты
+  `Makefile` вызывают bash-скрипты из `scripts/`.
+  Скачать: <https://git-scm.com/download/win>.
+- **GNU make** — запускает команды проекта: `make base`, `make full`, `make tetris` и
+  другие. Скачать: пакет [make](https://community.chocolatey.org/packages/make) для
+  Chocolatey или [GNU make для Windows](https://gnuwin32.sourceforge.net/packages/make.htm).
+- **Rust с `cargo`** (1.89 или новее) — компилятор языка Rust, на котором написан
+  эмулятор, и `cargo` — его система сборки. Ставится установщиком rustup.
+  Скачать: <https://rustup.rs> (`rustup-init.exe` для 64-разрядной Windows).
+- **Microsoft C++ Build Tools** — компилятор и компоновщик C++ от Microsoft; без них
+  Rust в Windows не может собрать программу. В установщике отметьте рабочую нагрузку
+  **«Разработка классических приложений на C++»** (Desktop development with C++). Если
+  Visual Studio с этой нагрузкой уже стоит, ничего ставить не нужно.
+  Скачать: <https://visualstudio.microsoft.com/visual-cpp-build-tools/>.
+
+Если у вас есть [Chocolatey](https://chocolatey.org), всё это ставится одной командой в
+PowerShell, **запущенном от имени администратора**:
 
 ```powershell
-choco install -y visualstudio2022-workload-vctools rustup.install git make
+choco install -y git make rustup.install visualstudio2022-workload-vctools
 ```
 
-После этого откройте новое окно терминала и переходите сразу к шагу 3 (скачать проект),
-пропустив установку make в шаге 5.
+После установки откройте **новое** окно Git Bash (в меню «Пуск» или правым щелчком в
+папке → «Open Git Bash here») и проверьте, что всё на месте:
 
-1. **Установите инструменты сборки C++ от Microsoft** — они нужны Rust для компоновки
-   программ. Скачайте [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/),
-   запустите установщик и отметьте рабочую нагрузку **«Разработка классических
-   приложений на C++»** (Desktop development with C++). Если Visual Studio с этой
-   нагрузкой уже стоит, шаг можно пропустить.
-2. **Установите Rust.** Скачайте и запустите `rustup-init.exe` с сайта
-   <https://rustup.rs> (вариант для 64-разрядной Windows), на вопрос установщика
-   ответьте `1` (установка по умолчанию). Или одной командой через `winget`:
+```sh
+git --version
+make --version
+cargo --version
+```
 
-   ```powershell
-   winget install Rustlang.Rustup
-   ```
+### Сборка и запуск
 
-   После установки **откройте новое окно** PowerShell и проверьте:
+В Git Bash:
 
-   ```powershell
-   cargo --version
-   ```
+```sh
+git clone https://github.com/pompei-kz/ut-88.git
+cd ut-88
+make base
+```
 
-3. **Скачайте проект** — через [Git для Windows](https://git-scm.com/download/win):
-
-   ```powershell
-   git clone https://github.com/pompei-kz/ut-88.git
-   cd ut-88
-   ```
-
-   или кнопкой **Code → Download ZIP** на странице репозитория (архив распакуйте и
-   перейдите в его папку).
-4. **Соберите эмулятор** (первая сборка занимает несколько минут):
-
-   ```powershell
-   cargo build --release
-   ```
-
-5. **Установите GNU make**:
-
-   ```powershell
-   winget install ezwinports.make
-   ```
-
-   или через Chocolatey (в PowerShell от имени администратора):
-
-   ```powershell
-   choco install make
-   ```
-
-   Откройте новое окно терминала и проверьте: `make --version`. Если у вас стоит
-   [MSYS2](https://www.msys2.org), make можно поставить и там: `pacman -S make`.
-6. **Запускайте команды `make` из Git Bash** (входит в Git для Windows; в папке проекта —
-   правый щелчок → «Open Git Bash here»). Рецепты `Makefile` вызывают bash-скрипты из
-   `scripts/`, поэтому из PowerShell или `cmd` они не работают. В Git Bash работают все
-   команды из [следующего раздела](#быстрый-старт--команды-make):
-
-   ```sh
-   make base
-   ```
-
-**Без make.** Команды можно запускать и из PowerShell без make и Git Bash — прямым вызовом
-`target\release\ut88.exe` из корня проекта:
-
-| Вместо `make …` | Команда в PowerShell                                                                    |
-|-----------------|-----------------------------------------------------------------------------------------|
-| `make base`     | `target\release\ut88.exe --config minimal`                                              |
-| `make full`     | `target\release\ut88.exe --config full`                                                 |
-| `make tetris`   | `target\release\ut88.exe --config full --load programs\tetris.bin --run 3000`           |
-| `make cpm`      | `target\release\ut88.exe --boot cpm64 --kvazidisk ut88-disk.img`                        |
-| `make os`       | `target\release\ut88.exe --boot os`                                                     |
-| `make …-t`      | та же команда с ключом `--tui` (в Windows Terminal или PowerShell размером от 80×32)    |
-| `make asm …`    | `target\release\asm-k580vm80a.exe -f ФАЙЛ.asm -o ФАЙЛ.hex`                              |
-
-Остальные программы из `programs/` запускаются так же, как «Тетрис»: адрес пуска и
-конфигурация (`minimal` или `full` — для программ дисплейного модуля) указаны в
-таблице [programs/README.md](programs/README.md). Все ключи:
-`target\release\ut88.exe --help`.
+Первый запуск собирает эмулятор (`cargo build --release`) — это занимает несколько
+минут. Дальше работают все команды из [следующего раздела](#быстрый-старт--команды-make).
 
 ## Быстрый старт — команды make
 
