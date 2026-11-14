@@ -497,6 +497,48 @@ fn tape_menu_insert_record() {
 
 // ------------------------------------------------------------------ программы
 
+/// Минимальная конфигурация в окне 720 × 680: все виджеты окна «Программы из журналов»
+/// помещаются на экране (окно ограничено главным, длинные подписи переносятся).
+#[test]
+fn programs_window_fits_small_screen() {
+    let mut w = Win::new("progs-small", Config::minimal());
+    w.pause();
+    w.h.input_mut().screen_size = vec2(720.0, 680.0);
+    w.settle();
+    w.key(KeyCode::F9);
+    w.settle();
+    let reg = w.h.registry();
+    let title = reg.get_by_label("Программы из журналов");
+    let screen = crate::gfx::Rect::from_min_size(crate::gfx::Pos2::ZERO, vec2(720.0, 680.0));
+    let in_window: Vec<_> = reg
+        .widgets
+        .iter()
+        .filter(|wi| wi.layer == title.layer)
+        .collect();
+    assert!(in_window.len() > 20, "{}", in_window.len());
+    for wi in in_window {
+        assert!(screen.contains_rect(wi.rect), "{}: {:?}", wi.label, wi.rect);
+        assert!(
+            screen.contains_rect(wi.visible_rect),
+            "{}: {:?}",
+            wi.label,
+            wi.visible_rect
+        );
+        assert!(
+            wi.rect.max.x <= title.rect.max.x,
+            "{}: {:?}",
+            wi.label,
+            wi.rect
+        );
+    }
+    // Строка недоступной программы целиком внутри окна, пометка — тоже.
+    let note = reg
+        .all_by_label("нужна полная конфигурация")
+        .map(|wi| wi.rect)
+        .fold(crate::gfx::Rect::NOTHING, |a, b| a.union(b));
+    assert!(note.max.x <= title.rect.max.x, "{note:?} {:?}", title.rect);
+}
+
 #[test]
 fn programs_window_and_menu() {
     let mut w = Win::new("progs", Config::minimal());

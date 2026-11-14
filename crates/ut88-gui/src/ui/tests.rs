@@ -744,3 +744,114 @@ fn hidpi_layout_in_points() {
     h.click("Жми");
     assert_eq!(h.state.clicks, 1);
 }
+
+/// Длинный текст для проверки переноса.
+const LONG: &str = "длинная подпись из многих слов, которая никак не помещается в узкое окно";
+
+/// Окно с длинными подписями: в столбце и в ряду после кнопки.
+fn narrow(ctx: &Ctx, s: &mut S) {
+    Window::new("Узкое окно с очень длинным заголовком, который не помещается")
+        .default_pos([10.0, 10.0])
+        .default_width(500.0)
+        .show(ctx, |ui| {
+            ui.label("одна");
+            ui.label(LONG);
+            ui.horizontal(|ui| {
+                if ui.button("Пуск").clicked() {
+                    s.clicks += 1;
+                }
+                ui.colored_label(Color::LIGHT_RED, format!("в ряду: {LONG}"));
+            });
+        });
+}
+
+#[test]
+fn window_limited_by_screen_and_labels_wrap() {
+    let mut h = Harness::new(vec2(300.0, 400.0), S::default(), narrow);
+    h.settle();
+    let reg = h.registry();
+    let layer = reg.by_label("одна").unwrap().layer;
+    let screen = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 400.0));
+    // Ни один виджет окна (и заголовок) не выходит за экран.
+    for w in reg.widgets.iter().filter(|w| w.layer == layer) {
+        assert!(screen.contains_rect(w.rect), "{}: {:?}", w.label, w.rect);
+    }
+    let title = reg
+        .all_by_kind(WidgetKind::WindowTitle)
+        .next()
+        .unwrap()
+        .rect;
+    assert!(title.width() <= 300.0 - 2.0 * 4.0 + 0.5, "{title:?}");
+    // Подписи переносятся: выше одной строки и не шире окна.
+    let one = reg.by_label("одна").unwrap().rect.height();
+    let long = reg.by_label(LONG).unwrap().rect;
+    assert!(long.height() > 1.5 * one, "{long:?}");
+    assert!(long.max.x <= title.max.x, "{long:?} {title:?}");
+    let in_row = reg.by_label(&format!("в ряду: {LONG}")).unwrap().rect;
+    let btn = reg.by_label("Пуск").unwrap().rect;
+    assert!(in_row.height() > 1.5 * one, "{in_row:?}");
+    // Подпись в ряду занимает остаток ряда справа от кнопки.
+    assert!(in_row.min.x > btn.max.x, "{in_row:?} {btn:?}");
+    assert!(in_row.max.x <= title.max.x, "{in_row:?} {title:?}");
+    // Кнопка не переносится и нажимается.
+    assert!(btn.height() < 1.5 * one + 8.0);
+    h.click("Пуск");
+    assert_eq!(h.state.clicks, 1);
+}
+
+#[test]
+fn window_moves_inside_when_screen_shrinks() {
+    let build = |ctx: &Ctx, _s: &mut S| {
+        TopBottomPanel::top("верх").show(ctx, |ui| {
+            ui.label("верхняя панель");
+        });
+        TopBottomPanel::bottom("низ").show(ctx, |ui| {
+            ui.label("нижняя панель");
+        });
+        CentralPanel::default().show(ctx, |_ui| {});
+        Window::new("Окно")
+            .default_pos([400.0, 0.0])
+            .default_width(200.0)
+            .show(ctx, |ui| {
+                ui.label("содержимое");
+                ui.label(LONG);
+            });
+    };
+    let mut h = Harness::new(size(), S::default(), build);
+    h.settle();
+    let check = |h: &Harness<S>, w: f32| {
+        let reg = h.registry();
+        let top = reg.by_label("верхняя панель").unwrap().rect.max.y;
+        let bottom = reg.by_label("нижняя панель").unwrap().rect.min.y;
+        let layer = reg.by_label("содержимое").unwrap().layer;
+        // Окно ниже верхней панели (в т. ч. при начальном положении на ней), выше нижней
+        // и в пределах ширины экрана.
+        for wi in reg.widgets.iter().filter(|wi| wi.layer == layer) {
+            let r = wi.rect;
+            assert!(r.min.x >= 0.0 && r.max.x <= w, "{}: {r:?}", wi.label);
+            assert!(r.min.y > top && r.max.y < bottom, "{}: {r:?}", wi.label);
+        }
+    };
+    check(&h, 640.0);
+    let before = h.get("Окно").rect;
+    // Главное окно уменьшилось — плавающее сдвигается внутрь и сужается.
+    h.input_mut().screen_size = vec2(300.0, 260.0);
+    h.settle();
+    check(&h, 300.0);
+    let after = h.get("Окно").rect;
+    assert!(after.min.x < before.min.x, "{before:?} {after:?}");
+    assert!(after.width() <= 300.0 - 8.0 + 0.5, "{after:?}");
+}
+
+#[test]
+fn truncate_with_ellipsis() {
+    let font = crate::gfx::FontKind::Sans;
+    let s = "заголовок окна";
+    assert_eq!(text::truncate(s, 14.0, font, 1.0, 1000.0), s);
+    let t = text::truncate(s, 14.0, font, 1.0, 60.0);
+    assert!(
+        t.ends_with('…') && t.chars().count() < s.chars().count(),
+        "{t}"
+    );
+    assert!(text::measure(&t, 14.0, font, 1.0).x <= 60.0);
+}
