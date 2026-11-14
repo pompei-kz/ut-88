@@ -96,6 +96,79 @@
 Терминальному интерфейсу (цели `-t`) графика не нужна вовсе — только терминал размером
 не меньше 80×32 символов.
 
+В Windows системные библиотеки Linux не нужны — см. [Запуск в Windows](#запуск-в-windows).
+
+## Запуск в Windows
+
+1. **Установите инструменты сборки C++ от Microsoft** — они нужны Rust для компоновки
+   программ. Скачайте [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/),
+   запустите установщик и отметьте рабочую нагрузку **«Разработка классических
+   приложений на C++»** (Desktop development with C++). Если Visual Studio с этой
+   нагрузкой уже стоит, шаг можно пропустить.
+2. **Установите Rust.** Скачайте и запустите `rustup-init.exe` с сайта
+   <https://rustup.rs> (вариант для 64-разрядной Windows), на вопрос установщика
+   ответьте `1` (установка по умолчанию). Или одной командой через `winget`:
+
+   ```powershell
+   winget install Rustlang.Rustup
+   ```
+
+   После установки **откройте новое окно** PowerShell и проверьте:
+
+   ```powershell
+   cargo --version
+   ```
+
+3. **Скачайте проект** — через [Git для Windows](https://git-scm.com/download/win):
+
+   ```powershell
+   git clone https://github.com/pompei-kz/ut-88.git
+   cd ut-88
+   ```
+
+   или кнопкой **Code → Download ZIP** на странице репозитория (архив распакуйте и
+   перейдите в его папку).
+4. **Соберите эмулятор** (первая сборка занимает несколько минут):
+
+   ```powershell
+   cargo build --release
+   ```
+
+5. **Установите GNU make**:
+
+   ```powershell
+   winget install ezwinports.make
+   ```
+
+   Откройте новое окно терминала и проверьте: `make --version`. Если у вас стоит
+   [MSYS2](https://www.msys2.org), make можно поставить и там: `pacman -S make`.
+6. **Запускайте команды `make` из Git Bash** (входит в Git для Windows; в папке проекта —
+   правый щелчок → «Open Git Bash here»). Рецепты `Makefile` вызывают bash-скрипты из
+   `scripts/`, поэтому из PowerShell или `cmd` они не работают. В Git Bash работают все
+   команды из [следующего раздела](#быстрый-старт--команды-make):
+
+   ```sh
+   make base
+   ```
+
+**Без make.** Команды можно запускать и из PowerShell без make и Git Bash — прямым вызовом
+`target\release\ut88.exe` из корня проекта:
+
+| Вместо `make …` | Команда в PowerShell                                                                    |
+|-----------------|-----------------------------------------------------------------------------------------|
+| `make base`     | `target\release\ut88.exe --config minimal`                                              |
+| `make full`     | `target\release\ut88.exe --config full`                                                 |
+| `make tetris`   | `target\release\ut88.exe --config full --load programs\tetris.bin --run 3000`           |
+| `make cpm`      | `target\release\ut88.exe --boot cpm64 --kvazidisk ut88-disk.img`                        |
+| `make os`       | `target\release\ut88.exe --boot os`                                                     |
+| `make …-t`      | та же команда с ключом `--tui` (в Windows Terminal или PowerShell размером от 80×32)    |
+| `make asm …`    | `target\release\asm-k580vm80a.exe -f ФАЙЛ.asm -o ФАЙЛ.hex`                              |
+
+Остальные программы из `programs/` запускаются так же, как «Тетрис»: адрес пуска и
+конфигурация (`minimal` или `full` — для программ дисплейного модуля) указаны в
+таблице [programs/README.md](programs/README.md). Все ключи:
+`target\release\ut88.exe --help`.
+
 ## Быстрый старт — команды make
 
 Склонируйте репозиторий и запускайте любую команду из его корня. Первый запуск собирает
