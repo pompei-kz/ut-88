@@ -120,6 +120,28 @@ pub(crate) fn wrap(text: &str, size: f32, font: FontKind, ppp: f32, max_w: f32) 
     lines
 }
 
+/// Обрезать строку до ширины `max_w`, заменив хвост многоточием «…» (строка, которая
+/// помещается, возвращается как есть).
+pub(crate) fn truncate(text: &str, size: f32, font: FontKind, ppp: f32, max_w: f32) -> String {
+    if measure(text, size, font, ppp).x <= max_w {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // Двоичный поиск наибольшего числа символов, которое помещается вместе с «…».
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let cand: String = chars[..mid].iter().collect::<String>() + "…";
+        if measure(&cand, size, font, ppp).x <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let head: String = chars[..lo].iter().collect();
+    format!("{}…", head.trim_end())
+}
+
 /// Байтовое смещение символа номер `ci` (или длина строки).
 pub(crate) fn byte_of(s: &str, ci: usize) -> usize {
     s.char_indices().nth(ci).map_or(s.len(), |(b, _)| b)

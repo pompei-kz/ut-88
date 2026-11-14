@@ -20,6 +20,8 @@ pub(crate) struct ScrollBody {
     pub enabled: bool,
     pub menu: MenuCtx,
     pub spacing: Vec2,
+    /// Переносить подписи в рядах (см. [`Ui::wrap_rows`]).
+    pub wrap_rows: bool,
 }
 
 /// Итог области прокрутки.
@@ -66,6 +68,7 @@ impl ScrollBody {
         ui.menu = self.menu;
         ui.enabled = self.enabled;
         ui.set_item_spacing(self.spacing);
+        ui.wrap_rows = self.wrap_rows;
         let r = f(&mut ui);
         let content = ui.finish();
         let content_h = content.height();
@@ -196,6 +199,7 @@ impl ScrollArea {
             enabled: ui.is_enabled(),
             menu: ui.menu,
             spacing: ui.item_spacing(),
+            wrap_rows: ui.wrap_rows,
         };
         let (r, out) = body.show(f);
         ui.advance(out.rect);

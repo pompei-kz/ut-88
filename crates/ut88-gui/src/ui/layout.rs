@@ -94,6 +94,9 @@ pub struct Ui {
     /// Отложенные горизонтальные разделители: место фигуры, Y, цвет, толщина.
     seps: Vec<(ShapeIdx, f32, Color, f32)>,
     placed_any: bool,
+    /// Переносить подписи и в рядах (содержимое плавающих окон): подпись занимает
+    /// остаток ряда и переносится по словам.
+    pub(crate) wrap_rows: bool,
 }
 
 impl Ui {
@@ -127,6 +130,7 @@ impl Ui {
             menu: MenuCtx::default(),
             seps: Vec::new(),
             placed_any: false,
+            wrap_rows: false,
         }
     }
 
@@ -165,6 +169,7 @@ impl Ui {
             menu: self.menu,
             seps: Vec::new(),
             placed_any: false,
+            wrap_rows: self.wrap_rows,
         }
     }
 
@@ -311,9 +316,23 @@ impl Ui {
         matches!(self.dir, Dir::Horizontal { .. })
     }
 
-    /// Можно переносить текст по словам (столбец вне таблицы).
-    pub(crate) fn wraps_text(&self) -> bool {
-        self.dir == Dir::Vertical && self.grid.is_none()
+    /// Ширина, по которой переносится по словам подпись шириной `text_w` в одну строку;
+    /// `None` — не переносить. В столбце вне таблицы — по свободной ширине. В ряду (только
+    /// при [`Ui::wrap_rows`]) — по остатку ряда; в ряду с переносом подпись, не
+    /// помещающаяся в остаток, уходит на новую строку и переносится по всей ширине.
+    pub(crate) fn text_wrap_width(&self, text_w: f32) -> Option<f32> {
+        if self.grid.is_some() {
+            return None;
+        }
+        let rest = self.available_width().max(1.0);
+        match self.dir {
+            Dir::Vertical => Some(rest),
+            Dir::Horizontal { .. } if !self.wrap_rows => None,
+            Dir::Horizontal { wrap: true } if self.placed_any && text_w > rest => {
+                Some(self.max_rect.width().max(1.0))
+            }
+            Dir::Horizontal { .. } => Some(rest),
+        }
     }
 
     fn cur_row(&self) -> Option<Id> {

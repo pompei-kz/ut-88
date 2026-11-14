@@ -206,8 +206,8 @@ impl Ui {
 
 // ------------------------------------------------------------------ подпись
 
-/// Подпись. В столбце длинный текст переносится по словам; `'\n'`
-/// начинает новую строку.
+/// Подпись. В столбце (и в ряду внутри плавающего окна) длинный текст переносится
+/// по словам; `'\n'` начинает новую строку.
 pub struct Label {
     text: RichText,
     sense: Sense,
@@ -235,10 +235,13 @@ impl Widget for Label {
         let (size, font) = self.text.font(&th);
         let ppp = ui.ppp;
         let s = self.text.text();
-        let lines: Vec<String> = if ui.wraps_text() {
-            text::wrap(s, size, font, ppp, ui.available_width().max(1.0))
-        } else {
-            s.split('\n').map(str::to_owned).collect()
+        let one_line = s
+            .split('\n')
+            .map(|l| text::measure(l, size, font, ppp).x)
+            .fold(0.0, f32::max);
+        let lines: Vec<String> = match ui.text_wrap_width(one_line) {
+            Some(w) if one_line > w => text::wrap(s, size, font, ppp, w),
+            _ => s.split('\n').map(str::to_owned).collect(),
         };
         let line_h = text::line_height(size, font, ppp);
         let w = lines

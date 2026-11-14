@@ -193,9 +193,15 @@ impl CentralPanel {
 
 // ------------------------------------------------------------------ плавающее окно
 
+/// Отступ плавающего окна от краёв свободной от панелей области главного окна.
+const WINDOW_EDGE: f32 = 4.0;
+
 /// Плавающее окно внутри главного: заголовок (перетаскивание),
 /// кнопка свёртывания, крестик (если задан [`Window::open`]), прокрутка содержимого,
-/// подъём наверх щелчком. Окно не выходит за пределы главного окна.
+/// подъём наверх щелчком. Окно не выходит за пределы свободной от панелей части главного
+/// окна (с отступом [`WINDOW_EDGE`]): ширина и высота ограничены ею, положение
+/// удерживается внутри и после уменьшения главного окна. Подписи в окне переносятся по
+/// словам (и в рядах — по остатку ряда); что всё равно шире окна, отсекается.
 pub struct Window<'o> {
     title: String,
     id: Option<Id>,
@@ -295,7 +301,19 @@ impl<'o> Window<'o> {
         let title_h = (title_text_h + 8.0).max(th.interact_height + 4.0);
         let title_w = text::measure(&self.title, th.title_size, crate::gfx::FontKind::Sans, ppp).x;
         let btn = th.icon_width + 2.0;
-        let min_inner = title_w + 2.0 * (btn + th.item_spacing.x);
+        // Область окна: свободная от панелей часть главного окна с отступом (если места
+        // совсем нет — без отступа).
+        let bounds = {
+            let b = avail.shrink(WINDOW_EDGE);
+            if b.width() > 0.0 && b.height() > 0.0 {
+                b
+            } else {
+                avail
+            }
+        };
+        let max_inner = (bounds.width() - 2.0 * m).max(1.0);
+        let title_pad = 2.0 * (btn + th.item_spacing.x);
+        let min_inner = (title_w + title_pad).min(max_inner);
 
         // Память окна.
         let mut mem = {
@@ -319,12 +337,16 @@ impl<'o> Window<'o> {
         };
         mem.last_frame = frame;
 
-        let inner_w = def_w.unwrap_or(0.0).max(mem.content.x).max(min_inner);
+        let inner_w = def_w
+            .unwrap_or(0.0)
+            .max(mem.content.x)
+            .max(min_inner)
+            .min(max_inner);
         let wrap_w = match def_w {
             Some(_) => inner_w,
-            None => th.wrap_width.max(mem.content.x),
+            None => th.wrap_width.max(mem.content.x).min(max_inner),
         };
-        let screen_max_view = (screen.height() - title_h - 2.0 * m - 2.0).max(20.0);
+        let screen_max_view = (bounds.height() - title_h - 2.0 * m - 2.0).max(20.0);
         let max_view = match (self.vscroll, def_h) {
             (true, Some(h)) => h.min(screen_max_view),
             _ => screen_max_view,
@@ -341,8 +363,8 @@ impl<'o> Window<'o> {
         );
         let clamp_pos = |p: Pos2, size: Vec2| {
             pos2(
-                p.x.clamp(screen.min.x, (screen.max.x - size.x).max(screen.min.x)),
-                p.y.clamp(screen.min.y, (screen.max.y - size.y).max(screen.min.y)),
+                p.x.clamp(bounds.min.x, (bounds.max.x - size.x).max(bounds.min.x)),
+                p.y.clamp(bounds.min.y, (bounds.max.y - size.y).max(bounds.min.y)),
             )
         };
         mem.pos = clamp_pos(mem.pos, est);
@@ -405,6 +427,7 @@ impl<'o> Window<'o> {
                 enabled: true,
                 menu: Default::default(),
                 spacing: th.item_spacing,
+                wrap_rows: true,
             };
             let (r, out) = body.show(f);
             inner = Some(r);
@@ -413,7 +436,8 @@ impl<'o> Window<'o> {
             body_w = match def_w {
                 Some(_) => inner_w.max(out.rect.width()),
                 None => out.rect.width().max(min_inner),
-            };
+            }
+            .min(max_inner);
         }
         let w = body_w + 2.0 * m;
         let h = title_h
@@ -459,17 +483,26 @@ impl<'o> Window<'o> {
                 color: lc,
             });
         }
+        // Заголовок, не помещающийся между кнопками, обрезается с многоточием.
+        let title_space = (w - 2.0 * m - title_pad).max(0.0);
+        let (title_s, title_w) = if title_w > title_space {
+            let t = text::truncate(
+                &self.title,
+                th.title_size,
+                crate::gfx::FontKind::Sans,
+                ppp,
+                title_space,
+            );
+            let tw = text::measure(&t, th.title_size, crate::gfx::FontKind::Sans, ppp).x;
+            (t, tw)
+        } else {
+            (self.title.clone(), title_w)
+        };
         let tp = pos2(
             tr.center().x - title_w * 0.5,
             tr.center().y - title_text_h * 0.5,
         );
-        tui.paint_text(
-            tp,
-            &self.title,
-            th.title_size,
-            crate::gfx::FontKind::Sans,
-            fg,
-        );
+        tui.paint_text(tp, &title_s, th.title_size, crate::gfx::FontKind::Sans, fg);
         tui.register(
             id.with("заголовок"),
             WidgetKind::WindowTitle,
