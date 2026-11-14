@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Long #[ignore] tests (8080 exerciser, Tetris) once a week.
+    # Долгие тесты #[ignore] (тестер команд 8080, «Тетрис») раз в неделю.
     - cron: "0 3 * * 1"
 
 env:
@@ -14,12 +14,12 @@ env:
 
 jobs:
   check:
-    name: Build, test, lint
+    name: Сборка, тесты, проверки
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system packages
+      - name: Установка системных пакетов
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
@@ -32,26 +32,26 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Format
+      - name: Форматирование
         run: cargo fmt --all --check
 
-      - name: Build
+      - name: Сборка
         run: cargo build --all-targets --locked
 
-      - name: Test
+      - name: Тесты
         run: cargo test --locked
 
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
   long-tests:
-    name: Long tests (ignored)
+    name: Долгие тесты (помеченные ignore)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system packages
+      - name: Установка системных пакетов
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
@@ -60,8 +60,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Long tests
-        # ut88-audio's ignored test needs a real sound card, so it is skipped here.
+      - name: Долгие тесты
+        # Пропускаемому тесту ut88-audio нужна настоящая звуковая карта, поэтому он здесь исключён.
         run: >
           cargo test --release --locked --workspace --exclude ut88-audio
           -- --ignored
