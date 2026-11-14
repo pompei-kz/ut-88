@@ -1,22 +1,22 @@
-//! Тесты окна через `egui_kittest`: виджеты ищутся по подписи (AccessKit) и «щёлкаются»
-//! мышью внутри тестового контекста egui — настоящее окно не открывается, события в
-//! X-экран не посылаются. Файловые диалоги подменены [`ScriptedDialogs`], звук —
-//! [`Audio::silent`].
+//! Тесты окна на стенде [`Harness`]: кадры [`App::frame`] строятся без окна ОС, виджеты
+//! ищутся по подписи в реестре кадра и «щёлкаются» мышью — настоящее окно не
+//! открывается, события в X-экран не посылаются. Файловые диалоги подменены
+//! [`ScriptedDialogs`], звук — [`Audio::silent`].
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui;
-use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
 use ut88_audio::Audio;
 use ut88_core::{Config, Machine};
 
 use super::*;
 use crate::dialogs::ScriptedDialogs;
+use crate::gfx::{FontKind, missing_glyphs, vec2};
+use crate::ui::testing::Harness;
+use crate::ui::{Modifiers, WidgetKind};
 
-/// Окно приложения в тестовом контексте.
+/// Окно приложения на стенде.
 struct Win {
-    h: Harness<'static, App>,
+    h: Harness<App>,
     dlg: ScriptedDialogs,
     dir: PathBuf,
 }
@@ -32,6 +32,31 @@ fn tmp_dir(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
+}
+
+/// Приложение для тестов: подставные диалоги, быстрый снимок в папке теста, звук без
+/// звуковой карты.
+fn test_app(
+    dir: &Path,
+    machine: Machine,
+    speed: Speed,
+    sound: bool,
+    cfg: PathBuf,
+) -> (App, ScriptedDialogs) {
+    let dlg = ScriptedDialogs::default();
+    let opts = GuiOptions {
+        machine,
+        speed,
+        sound,
+        programs_dir: Some(programs_dir()),
+        kvazidisk_file: None,
+        settings_dir: Some(cfg),
+    };
+    let mut app = App::new(opts);
+    app.set_file_dialogs(Box::new(dlg.clone()));
+    app.set_quick_snapshot(dir.join("quick.snap"));
+    app.set_audio_opener(Audio::silent);
+    (app, dlg)
 }
 
 impl Win {
@@ -60,41 +85,23 @@ impl Win {
     }
 
     fn launch(dir: PathBuf, machine: Machine, speed: Speed, sound: bool, cfg: PathBuf) -> Self {
-        let dlg = ScriptedDialogs::default();
-        let opts = GuiOptions {
-            machine,
-            speed,
-            sound,
-            programs_dir: Some(programs_dir()),
-            kvazidisk_file: None,
-            settings_dir: Some(cfg),
-        };
-        let d2 = dlg.clone();
-        let quick = dir.join("quick.snap");
-        let h = Harness::builder()
-            .with_size(egui::vec2(1280.0, 900.0))
-            .build_eframe(move |_cc| {
-                let mut app = App::new(opts);
-                app.set_file_dialogs(Box::new(d2));
-                app.set_quick_snapshot(quick);
-                app.set_audio_opener(Audio::silent);
-                app
-            });
-        let mut w = Self { h, dlg, dir };
-        w.h.step();
-        w
+        let (app, dlg) = test_app(&dir, machine, speed, sound, cfg);
+        let h = Harness::new(vec2(1280.0, 900.0), app, |ctx, app: &mut App| {
+            app.frame(ctx)
+        });
+        Self { h, dlg, dir }
     }
 
     fn app(&self) -> &App {
-        self.h.state()
+        &self.h.state
     }
 
     fn app_mut(&mut self) -> &mut App {
-        self.h.state_mut()
+        &mut self.h.state
     }
 
     fn m(&mut self) -> &mut Machine {
-        &mut self.h.state_mut().m
+        &mut self.h.state.m
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -106,26 +113,19 @@ impl Win {
         self.dlg.push(Some(p.to_path_buf()));
     }
 
-    /// Обработать очередь событий (кадр на событие) и нарисовать ещё кадр.
+    /// Обработать события и нарисовать ещё кадр.
     fn settle(&mut self) {
-        self.h.step();
-        self.h.step();
+        self.h.settle();
     }
 
     /// Щёлкнуть мышью по единственному виджету с подписью `label`.
     fn click(&mut self, label: &str) {
-        self.h.get_by_label(label).click();
-        self.settle();
+        self.h.click(label);
     }
 
-    /// Щёлкнуть `n`-й (по порядку дерева) виджет с подписью `label`.
+    /// Щёлкнуть `n`-й (по порядку кадра) виджет с подписью `label`.
     fn click_nth(&mut self, label: &str, n: usize) {
-        self.h
-            .get_all_by_label(label)
-            .nth(n)
-            .unwrap_or_else(|| panic!("нет {n}-го «{label}»"))
-            .click();
-        self.settle();
+        self.h.click_nth(label, n);
     }
 
     /// Пункт меню: `top` → `item`.
@@ -134,17 +134,22 @@ impl Win {
         self.click(item);
     }
 
-    fn key(&mut self, k: egui::Key) {
-        self.h.key_press(k);
+    fn key(&mut self, k: KeyCode) {
+        self.h.key(k);
         self.settle();
     }
 
     fn has(&self, label: &str) -> bool {
-        self.h.query_all_by_label(label).next().is_some()
+        self.h.has(label)
     }
 
     fn has_containing(&self, part: &str) -> bool {
-        self.h.query_all_by_label_contains(part).next().is_some()
+        self.h.has_containing(part)
+    }
+
+    /// Виджет `label` доступен (паника, если его нет или их несколько).
+    fn enabled(&self, label: &str) -> bool {
+        self.h.get(label).enabled
     }
 
     /// Остановить эмуляцию (меню «Машина → Пауза»), чтобы память и PC не менялись.
@@ -175,47 +180,23 @@ impl Win {
     }
 
     /// Кнопка `button` в строке окна F9, где подпись программы начинается с `name — `.
-    fn program_row_button(&mut self, name: &str, button: &str) {
+    fn row_widget(&self, name: &str, button: &str) -> crate::ui::WidgetInfo {
         let prefix = format!("{name} — ");
-        let y = self
-            .h
-            .get_by(|n| {
-                n.role() == egui::accesskit::Role::Label
-                    && n.value().is_some_and(|l| l.starts_with(&prefix))
-            })
-            .rect()
-            .center()
-            .y;
-        let node = self
-            .h
-            .get_all_by_label(button)
-            .find(|b| (b.rect().center().y - y).abs() < 4.0)
-            .unwrap_or_else(|| panic!("нет «{button}» в строке {name}"));
-        assert!(
-            !node.accesskit_node().is_disabled(),
-            "{name}: «{button}» выключена"
-        );
-        node.click();
-        self.settle();
+        self.h
+            .registry()
+            .in_row_with_prefix(&prefix, button)
+            .cloned()
+            .unwrap_or_else(|| panic!("нет «{button}» в строке {name}"))
+    }
+
+    fn program_row_button(&mut self, name: &str, button: &str) {
+        let w = self.row_widget(name, button);
+        assert!(w.enabled, "{name}: «{button}» выключена");
+        self.h.click_widget(&w);
     }
 
     fn program_row_disabled(&self, name: &str, button: &str) -> bool {
-        let prefix = format!("{name} — ");
-        let y = self
-            .h
-            .get_by(|n| {
-                n.role() == egui::accesskit::Role::Label
-                    && n.value().is_some_and(|l| l.starts_with(&prefix))
-            })
-            .rect()
-            .center()
-            .y;
-        self.h
-            .get_all_by_label(button)
-            .find(|b| (b.rect().center().y - y).abs() < 4.0)
-            .unwrap_or_else(|| panic!("нет «{button}» в строке {name}"))
-            .accesskit_node()
-            .is_disabled()
+        !self.row_widget(name, button).enabled
     }
 }
 
@@ -284,11 +265,11 @@ fn quick_snapshots_keys_buttons_menu() {
 
     // Клавиши F6/F7.
     w.m().poke(0xC010, 0xA1);
-    w.key(egui::Key::F6);
+    w.key(KeyCode::F6);
     w.no_error();
     assert!(quick.is_file());
     w.m().poke(0xC010, 0x00);
-    w.key(egui::Key::F7);
+    w.key(KeyCode::F7);
     w.no_error();
     assert_eq!(w.m().peek(0xC010), 0xA1);
 
@@ -340,15 +321,11 @@ fn file_menu_load_program() {
 fn tape_window_files() {
     let mut w = Win::new("tape", Config::minimal());
     w.pause();
-    w.key(egui::Key::F8);
+    w.key(KeyCode::F8);
     assert!(w.app().tape.open);
     assert!(w.has("Магнитофон и файлы"));
     // Без кассеты кнопки ленты выключены.
-    assert!(
-        w.h.get_by_label("▶ Воспроизведение")
-            .accesskit_node()
-            .is_disabled()
-    );
+    assert!(!w.enabled("▶ Воспроизведение"));
 
     // Быстрая загрузка .bin по адресу.
     let bin = w.path("prog.bin");
@@ -357,14 +334,13 @@ fn tape_window_files() {
     w.click_nth("Обзор…", 0);
     assert_eq!(w.app().tape.load_path, bin.display().to_string());
     // Адрес набирается в поле с клавиатуры.
-    let field = w.h.get_all_by_value("C000").next().unwrap();
-    field.click();
-    w.settle();
-    w.h.key_press(egui::Key::End);
+    let field = w.h.get_by_value("C000");
+    w.h.click_widget(&field);
+    w.h.key(KeyCode::End);
     for _ in 0..4 {
-        w.h.key_press(egui::Key::Backspace);
+        w.h.key(KeyCode::Backspace);
     }
-    w.h.event(egui::Event::Text("C100".into()));
+    w.h.type_text("C100");
     w.settle();
     assert_eq!(w.app().tape.load_addr, "C100");
     // Набор в поле не нажимает клавиш ЮТ-88.
@@ -462,7 +438,7 @@ fn tape_window_files() {
     assert!(w.status().contains("перемотана"));
 
     // Закрыть окно клавишей F8.
-    w.key(egui::Key::F8);
+    w.key(KeyCode::F8);
     assert!(!w.app().tape.open);
     assert!(!w.has("Магнитофон и файлы"));
 }
@@ -525,7 +501,7 @@ fn tape_menu_insert_record() {
 fn programs_window_and_menu() {
     let mut w = Win::new("progs", Config::minimal());
     w.pause();
-    w.key(egui::Key::F9);
+    w.key(KeyCode::F9);
     assert!(w.has("Программы из журналов"));
 
     // «Гамма»: загрузить и запустить.
@@ -560,21 +536,21 @@ fn programs_window_and_menu() {
     assert!(!w.program_row_disabled("reaction", "Загрузить"));
 
     // Закрыть окно и пройти тем же путём через меню «Программы».
-    w.key(egui::Key::F9);
+    w.key(KeyCode::F9);
     assert!(!w.has("Программы из журналов"));
     w.m().poke(0xC03E, 0);
     w.click("Программы");
-    w.click("gamma — Программа «Гамма» ⏵");
+    w.click("gamma — Программа «Гамма»");
     w.click("Загрузить и запустить");
     w.no_error();
     assert_eq!(w.mem(0xC000, 0x83), program_bin("gamma"));
     assert_eq!(w.m().cpu.pc, 0xC03E);
 
     w.click("Программы");
-    w.click("tetris — Игра «Тетрис» ⏵");
+    w.click("tetris — Игра «Тетрис»");
     assert!(w.has("нужна полная конфигурация"));
-    assert!(w.h.get_by_label("Загрузить").accesskit_node().is_disabled());
-    w.key(egui::Key::Escape);
+    assert!(!w.enabled("Загрузить"));
+    w.key(KeyCode::Escape);
 
     w.menu("Программы", "Окно «Программы из журналов» (F9)");
     assert!(w.app().programs_open);
@@ -584,7 +560,7 @@ fn programs_window_and_menu() {
     w.settle();
     w.menu("Машина", "полная (МОНИТОР-F, часы в нём)");
     w.pause();
-    w.key(egui::Key::F9);
+    w.key(KeyCode::F9);
     assert!(!w.has("нужна полная конфигурация"));
     w.program_row_button("tetris", "Загрузить");
     w.no_error();
@@ -620,7 +596,7 @@ fn machine_menu() {
     for s in Speed::all() {
         w.menu("Машина", &s.label());
         assert_eq!(w.app().speed, s, "{}", s.label());
-        w.key(egui::Key::Escape);
+        w.key(KeyCode::Escape);
     }
 
     // Конфигурации.
@@ -641,14 +617,14 @@ fn machine_menu() {
     let irq = w.m().config().clock_interrupts;
     w.menu("Машина", "Прерывания от часов");
     assert_eq!(w.m().config().clock_interrupts, !irq);
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
     let rom = w.m().config().monitor_f_rom;
     w.menu("Машина", "ПЗУ МОНИТОРА-F (сегмент F000H–FFFFH)");
     assert_eq!(w.m().config().monitor_f_rom, !rom);
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
     w.menu("Машина", "Клавиатура ПК → кнопки модуля 1");
     assert!(w.app().pc_to_pad);
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
 }
 
 #[test]
@@ -670,10 +646,10 @@ fn view_and_help_menus() {
 
     w.menu("Вид", "белый");
     assert_eq!(w.app().phosphor, Phosphor::White);
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
     w.menu("Вид", "зелёный");
     assert_eq!(w.app().phosphor, Phosphor::Green);
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
     w.menu("Вид", "Отладчик (F12)");
     assert!(w.app().dbg.open);
     w.app_mut().dbg.open = false;
@@ -692,14 +668,19 @@ fn view_and_help_menus() {
 /// Громкость меняется ползунком в меню «Вид» (стрелками с клавиатуры).
 fn volume_down(w: &mut Win, steps: usize) {
     w.click("Вид");
-    let slider = w.h.get_by_role(egui::accesskit::Role::Slider);
-    slider.focus();
-    w.settle();
+    let slider =
+        w.h.registry()
+            .all_by_kind(WidgetKind::Slider)
+            .next()
+            .cloned()
+            .expect("ползунок громкости");
+    w.h.ctx.request_focus(slider.id);
+    w.h.step();
     for _ in 0..steps {
-        w.h.key_press(egui::Key::ArrowLeft);
+        w.h.key(KeyCode::ArrowLeft);
         w.settle();
     }
-    w.key(egui::Key::Escape);
+    w.key(KeyCode::Escape);
 }
 
 #[test]
@@ -738,7 +719,7 @@ fn no_sound_key_keeps_saved_sound() {
         let mut w = Win::with_settings("nosound-1", false, &cfg);
         assert!(!w.app().sound_wanted);
         volume_down(&mut w, 1);
-        eframe::App::on_exit(w.app_mut(), None);
+        w.app_mut().on_exit();
         assert_eq!(
             std::fs::read_to_string(cfg.join(settings::SOUND_FILE)).unwrap(),
             "on\n"
@@ -910,43 +891,33 @@ fn fkey_bar_buttons() {
     w.app_mut().dbg.open = false;
     w.settle();
 
-    // F10 — команда окну закрыться.
-    w.h.get_by_label("F10 Выход").click();
-    w.h.step();
-    let close =
-        w.h.output()
-            .viewport_output
-            .values()
-            .any(|v| v.commands.contains(&egui::ViewportCommand::Close));
-    assert!(close, "F10 не закрывает окно");
+    // F10 — просьба окну закрыться.
+    assert!(!w.app().quit_requested());
+    w.click("F10 Выход");
+    assert!(w.app().quit_requested(), "F10 не закрывает окно");
 }
 
 #[test]
 fn fkeys_from_keyboard() {
     let mut w = Win::new("fkeys-kb", Config::minimal());
-    w.key(egui::Key::F4);
+    w.key(KeyCode::F4);
     assert!(w.app().paused);
     w.m().jump(0xC123);
-    w.key(egui::Key::F2);
+    w.key(KeyCode::F2);
     assert_eq!(w.m().cpu.pc, 0);
-    w.key(egui::Key::F5);
+    w.key(KeyCode::F5);
     assert_eq!(w.app().speed, Speed::X1.step(true));
-    w.h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F5);
+    w.h.key_mods(Modifiers::SHIFT, KeyCode::F5);
     w.settle();
     assert_eq!(w.app().speed, Speed::X1);
-    w.key(egui::Key::F11);
+    w.key(KeyCode::F11);
     assert!(w.has("Справка: клавиши"));
-    w.key(egui::Key::F12);
+    w.key(KeyCode::F12);
     assert!(w.app().dbg.open);
-    // Нажатие и отпускание — разные кадры; команда уходит в кадре нажатия.
-    w.h.key_down(egui::Key::F10);
+    // Нажатие и отпускание — разные кадры; выход просится в кадре нажатия.
+    w.h.key_down(KeyCode::F10);
     w.h.step();
-    assert!(
-        w.h.output()
-            .viewport_output
-            .values()
-            .any(|v| v.commands.contains(&egui::ViewportCommand::Close))
-    );
+    assert!(w.app().quit_requested());
 }
 
 // ------------------------------------------------------------------ «максимум»
@@ -1012,8 +983,8 @@ fn bench_tetris() -> Machine {
     m
 }
 
-/// Замер «максимума» окна (кадры egui через `Harness::step`, без GPU и вертикальной
-/// синхронизации): эмулированные МГц и кадров окна в секунду.
+/// Замер «максимума» окна (кадры через `Harness::step` с рисованием, без вывода в окно и
+/// вертикальной синхронизации): эмулированные МГц и кадров окна в секунду.
 ///
 /// ```text
 /// cargo test --release -p ut88-gui bench_max -- --ignored --nocapture
@@ -1139,8 +1110,8 @@ fn screen_and_indicators_redrawn_on_change() {
     w.h.step();
     w.pause();
     w.settle();
-    assert!(w.app().screen_tex.is_some());
-    // Без изменений текстура не перерисовывается: испорченный буфер остаётся как есть.
+    assert!(w.app().screen_ok);
+    // Без изменений изображение не перерисовывается: испорченный буфер остаётся как есть.
     w.app_mut().screen_buf.fill(7);
     w.settle();
     assert!(w.app().screen_buf.iter().all(|&b| b == 7));
@@ -1178,4 +1149,308 @@ fn max_budget_adapts_to_frame_rate() {
         b = next_max_budget(b, ms(33));
     }
     assert_eq!(b, MAX_BUDGET_MIN);
+}
+
+// ------------------------------------------------------------------ отладчик
+
+/// Окно отладчика на своём стенде — как отдельное окно ОС со своим контекстом.
+fn debugger_harness(name: &str, config: Config) -> (Harness<App>, PathBuf) {
+    let dir = tmp_dir(name);
+    let (mut app, _) = test_app(
+        &dir,
+        Machine::new(config),
+        Speed::X1,
+        false,
+        dir.join("config"),
+    );
+    app.dbg.open = true;
+    app.paused = true;
+    let h = Harness::new(vec2(820.0, 760.0), app, |ctx, app: &mut App| {
+        app.debugger_frame(ctx)
+    });
+    (h, dir)
+}
+
+#[test]
+fn debugger_window_without_os_window() {
+    let (mut h, dir) = debugger_harness("dbg", Config::minimal());
+    for label in [
+        "Регистры",
+        "Точки останова",
+        "Дизассемблер",
+        "Память",
+        "Шаг",
+        "Пуск до",
+    ] {
+        assert!(h.has(label), "нет «{label}»");
+    }
+    assert!(h.has("▶ Продолжить"));
+
+    // Шаг выполняет одну команду.
+    let pc = h.state.m.cpu.pc;
+    h.click("Шаг");
+    assert_ne!(h.state.m.cpu.pc, pc);
+    assert!(h.state.paused);
+
+    // Точка останова по адресу: поле «адрес» + «+».
+    let edits: Vec<_> = h
+        .registry()
+        .all_by_kind(WidgetKind::TextEdit)
+        .cloned()
+        .collect();
+    // Порядок полей: «до адреса», 6 регистров, адрес точки, порт, адрес памяти, запись.
+    let bp_field = edits[7].clone();
+    h.click_widget(&bp_field);
+    h.type_text("0005");
+    h.click_nth("+", 0);
+    assert_eq!(h.state.dbg.breakpoints, vec![0x0005]);
+    assert!(h.has("0005"));
+    h.click("✖");
+    assert!(h.state.dbg.breakpoints.is_empty());
+
+    // Точка останова по порту: поле, выбор направления в списке, «+».
+    let port_field = edits[8].clone();
+    h.click_widget(&port_field);
+    h.type_text("A0");
+    h.click("IN/OUT");
+    h.click("IN");
+    h.click_nth("+", 1);
+    assert_eq!(
+        h.state.dbg.port_breaks,
+        vec![(0xA0, crate::debugger::PortDir::In)]
+    );
+    assert!(h.has("IN A0H"));
+
+    // Правка регистра PC при паузе.
+    let pc_field = edits[6].clone();
+    assert!(pc_field.enabled);
+    h.click_widget(&pc_field);
+    h.key(KeyCode::End);
+    for _ in 0..4 {
+        h.key(KeyCode::Backspace);
+    }
+    h.type_text("C000");
+    h.key(KeyCode::Enter);
+    h.settle();
+    assert_eq!(h.state.m.cpu.pc, 0xC000);
+
+    // Запись байтов в память.
+    let addr = edits[10].clone();
+    h.click_widget(&addr);
+    h.type_text("C100");
+    let bytes = edits[11].clone();
+    h.click_widget(&bytes);
+    h.type_text("3E 55 C9");
+    h.click("Записать");
+    assert_eq!(
+        (0..3)
+            .map(|i| h.state.m.peek(0xC100 + i))
+            .collect::<Vec<_>>(),
+        [0x3E, 0x55, 0xC9]
+    );
+    assert!(h.has("записано 3 байт с C100"));
+
+    // Продолжить.
+    h.click("▶ Продолжить");
+    assert!(!h.state.paused);
+    assert!(h.has("⏸ Пауза"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ------------------------------------------------------------------ шрифт
+
+/// Подписи кадра, которые выводятся текстом (значки `ui::icon` рисуются фигурами).
+fn frame_texts(h: &Harness<App>, out: &mut Vec<String>) {
+    for w in h.registry().widgets {
+        out.push(w.label.clone());
+        out.extend(w.value.clone());
+        out.extend(w.hover_text.clone());
+    }
+}
+
+/// Все подписи интерфейса (меню, окна, строка состояния, панель F-клавиш, отладчик)
+/// рисуются вшитым шрифтом: в DejaVu Sans и Sans Mono есть все их символы, кроме значков,
+/// которые `ui::icon` рисует фигурами.
+#[test]
+fn all_labels_have_glyphs() {
+    let mut texts = Vec::new();
+    for config in [Config::minimal(), Config::cpm()] {
+        let mut w = Win::new("glyphs", config);
+        frame_texts(&w.h, &mut texts);
+        // Меню, в том числе вложенные меню программ.
+        for top in [
+            "Машина",
+            "Магнитофон",
+            "Файл",
+            "CP/M",
+            "Программы",
+            "Вид",
+            "Справка",
+        ] {
+            w.click(top);
+            frame_texts(&w.h, &mut texts);
+            if top == "Программы" {
+                let subs: Vec<_> =
+                    w.h.registry()
+                        .all_by_kind(WidgetKind::MenuButton)
+                        .filter(|m| m.label.contains(" — "))
+                        .cloned()
+                        .collect();
+                for m in subs {
+                    w.h.move_to(m.rect.center());
+                    w.h.step();
+                    frame_texts(&w.h, &mut texts);
+                }
+            }
+            w.key(KeyCode::Escape);
+        }
+        // Все окна разом, пауза и работа, запись на ленту.
+        w.app_mut().tape.open = true;
+        w.app_mut().programs_open = true;
+        w.app_mut().help_open = true;
+        w.app_mut().about_open = true;
+        w.app_mut().cpm_open = true;
+        w.app_mut().error_popup = Some("Ошибка: «пример» — №1…".into());
+        w.m().tape_record_start();
+        w.settle();
+        frame_texts(&w.h, &mut texts);
+        w.pause();
+        frame_texts(&w.h, &mut texts);
+    }
+    let (h, dir) = debugger_harness("glyphs-dbg", Config::minimal());
+    frame_texts(&h, &mut texts);
+    let _ = std::fs::remove_dir_all(dir);
+
+    texts.sort();
+    texts.dedup();
+    let mut bad = Vec::new();
+    for t in &texts {
+        let plain: String = t
+            .chars()
+            .filter(|&c| crate::ui::Icon::from_char(c).is_none())
+            .collect();
+        for kind in [FontKind::Sans, FontKind::Mono] {
+            let miss = missing_glyphs(&plain, kind);
+            if !miss.is_empty() {
+                bad.push(format!("{kind:?}: «{t}» — {miss:?}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "нет в шрифте:\n{}", bad.join("\n"));
+}
+
+// ------------------------------------------------------------------ кэш-слой рисунка
+
+/// Кадр окна (в пределах рисунка компьютера) совпадает с прямым рисованием всего
+/// рисунка с теми же нажатыми клавишами, индикаторами и экраном.
+fn assert_picture_matches_direct(w: &Win, what: &str) {
+    let app = w.app();
+    let layout = app.pic.layout.expect("рисунок нарисован");
+    let rect = layout.rect;
+    let (cw, ch, ppp) = w.h.ctx.with_canvas(|c| (c.width(), c.height(), c.scale()));
+    let mut direct = Canvas::new(cw, ch);
+    direct.set_scale(ppp);
+    direct.clear(w.h.ctx.theme().panel_fill);
+    direct.push_clip(rect);
+    let screen = app.screen_ok.then_some((
+        app.screen_buf.as_slice(),
+        screen::WIDTH as u32,
+        screen::HEIGHT as u32,
+    ));
+    picture::computer(
+        &mut direct,
+        rect,
+        app.has_display(),
+        app.segs,
+        screen,
+        app.phosphor.glow(),
+        &PressedSet(&app.drawn_down()),
+        &mut Hits::default(),
+    );
+    direct.pop_clip();
+    let inner = rect.shrink(1.0);
+    let (x0, y0) = (
+        (inner.min.x * ppp).ceil() as u32,
+        (inner.min.y * ppp).ceil() as u32,
+    );
+    let (x1, y1) = ((inner.max.x * ppp) as u32, (inner.max.y * ppp) as u32);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let f = w.h.pixel(x, y);
+            let d = direct.pixel(x, y);
+            assert_eq!(f, d, "{what}: пиксель ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn picture_layer_redraws_pressed_key_only() {
+    for (config, hit) in [
+        (Config::minimal(), Hit::Pad(PadKey::Hex(5))),
+        (Config::full(), Hit::Kb(KbKey::for_code(b'A').unwrap().0)),
+    ] {
+        let mut w = Win::new("layer", config);
+        w.settle();
+        assert_picture_matches_direct(&w, "до нажатия");
+        let full0 = w.app().pic.full_redraws;
+        let keys0 = w.app().pic.key_redraws;
+
+        // Щелчок мышью по клавише: перерисована только она.
+        let zone = w
+            .app()
+            .pic
+            .hits
+            .zones
+            .iter()
+            .find(|z| z.1 == hit)
+            .expect("зона клавиши")
+            .0;
+        w.h.click_at(zone.center());
+        w.h.step();
+        assert!(w.app().drawn_down().contains(&hit), "{hit:?} не нажата");
+        assert!(w.app().pic.down.contains(&hit));
+        assert_eq!(w.app().pic.full_redraws, full0, "слой перерисован целиком");
+        assert!(w.app().pic.key_redraws > keys0);
+        assert_picture_matches_direct(&w, "нажата");
+
+        // Время удержания вышло — клавиша отпущена и перерисована.
+        w.m().run_seconds(0.5);
+        w.h.run(3);
+        assert!(!w.app().drawn_down().contains(&hit), "{hit:?} не отпущена");
+        assert!(!w.app().pic.down.contains(&hit));
+        assert_eq!(w.app().pic.full_redraws, full0);
+        assert_picture_matches_direct(&w, "отпущена");
+
+        // Смена люминофора — слой целиком.
+        w.app_mut().phosphor = Phosphor::White;
+        w.h.step();
+        assert_eq!(w.app().pic.full_redraws, full0 + 1);
+        assert_picture_matches_direct(&w, "белый люминофор");
+    }
+}
+
+/// Нажатие мыши мимо открытого меню над рисунком только закрывает меню, клавиша ЮТ-88
+/// не нажимается; над окном — тоже не нажимается.
+#[test]
+fn mouse_on_picture_blocked_by_menu_and_window() {
+    let mut w = Win::new("mouse-block", Config::minimal());
+    w.pause();
+    let hit = Hit::Pad(PadKey::Hex(0));
+    let zone = w
+        .app()
+        .pic
+        .hits
+        .zones
+        .iter()
+        .find(|z| z.1 == hit)
+        .unwrap()
+        .0;
+    w.click("Машина");
+    assert!(w.h.ctx.any_popup_open());
+    w.h.click_at(zone.center());
+    assert!(!w.h.ctx.any_popup_open());
+    assert!(w.app().holds.is_empty(), "нажатие прошло сквозь меню");
+    // Без меню щелчок нажимает клавишу.
+    w.h.click_at(zone.center());
+    assert!(w.app().holds.contains_key(&hit));
 }

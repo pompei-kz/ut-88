@@ -489,33 +489,3 @@ fn geometry_helpers() {
         pos2(6.0, 8.0)
     );
 }
-
-/// Сводка: какие символы подписей нынешнего интерфейса отсутствуют в шрифтах.
-/// Запуск: `cargo test -p ut88-gui gfx::tests::ui_strings_report -- --ignored --nocapture`.
-#[test]
-#[ignore]
-fn ui_strings_report() {
-    let sources = [
-        include_str!("../app.rs"),
-        include_str!("../debugger.rs"),
-        include_str!("../keymap.rs"),
-        include_str!("../draw.rs"),
-    ];
-    let mut chars = String::new();
-    for src in sources {
-        // Строковые литералы без учёта экранирования — для сводки этого достаточно.
-        for (i, part) in src.split('"').enumerate() {
-            if i % 2 == 1 && !part.is_ascii() {
-                chars.push_str(part);
-            }
-        }
-    }
-    for font in [FontKind::Sans, FontKind::Mono] {
-        let miss = missing_glyphs(&chars, font);
-        let list: Vec<String> = miss
-            .iter()
-            .map(|c| format!("{c} U+{:04X}", *c as u32))
-            .collect();
-        eprintln!("{font:?}: нет {} символов: {}", miss.len(), list.join(", "));
-    }
-}

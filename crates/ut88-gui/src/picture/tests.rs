@@ -1,5 +1,5 @@
 //! Тесты рисунка компьютера: размеры, зоны нажатия, нажатые клавиши, индикаторы, экран,
-//! кэш-слой и совпадение зон с прежним `draw.rs` (egui).
+//! кэш-слой.
 
 use std::collections::HashSet;
 
@@ -307,77 +307,6 @@ fn live_part_stays_in_place() {
                     c.pixmap().pixel(x, y),
                     "full={full}: пиксель ({x}, {y})"
                 );
-            }
-        }
-    }
-}
-
-/// Зоны нажатия совпадают с прежним рисунком на egui (`draw.rs`) при том же
-/// прямоугольнике.
-#[test]
-fn hits_match_old_egui_drawing() {
-    use eframe::egui;
-
-    struct OldNone;
-    impl crate::draw::Pressed for OldNone {
-        fn is_down(&self, _h: crate::draw::Hit) -> bool {
-            false
-        }
-    }
-    let conv = |h: crate::draw::Hit| match h {
-        crate::draw::Hit::Pad(p) => Hit::Pad(p),
-        crate::draw::Hit::Kb(k) => Hit::Kb(k),
-    };
-    for full in [false, true] {
-        for (x0, y0, w, h) in [
-            (0.0, 24.0, 1280.0, 876.0),
-            (0.0, 24.0, 720.0, 656.0),
-            (3.5, 30.0, 911.0, 1333.0),
-        ] {
-            let rect = Rect::from_min_size(pos2(x0, y0), vec2(w, h));
-            // Старый рисунок: прямоугольник и Xf те же, что в App::computer.
-            let erect = egui::Rect::from_min_size(egui::pos2(x0, y0), egui::vec2(w, h));
-            let ctx = egui::Context::default();
-            let mut old = crate::draw::Hits::default();
-            let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                let p = egui::Painter::new(ctx.clone(), egui::LayerId::background(), erect);
-                use crate::draw as d;
-                if full {
-                    let x = d::Xf::fit(erect.shrink(8.0), d::KB_W + 60.0, d::TV_H + d::KB_H + 50.0);
-                    d::tv(&p, x.sub(20.0, 10.0, 1.0), None, egui::Color32::GREEN);
-                    d::cpu_module(
-                        &p,
-                        x.sub(d::TV_W + 50.0, 40.0, 0.86),
-                        [0; 6],
-                        &OldNone,
-                        &mut old,
-                    );
-                    d::keyboard(&p, x.sub(30.0, d::TV_H + 40.0, 1.0), &OldNone, &mut old);
-                } else {
-                    let x = d::Xf::fit(erect.shrink(12.0), d::MODULE_W + 20.0, d::MODULE_H + 20.0);
-                    d::cpu_module(&p, x.sub(10.0, 6.0, 1.0), [0; 6], &OldNone, &mut old);
-                }
-            });
-            let mut c = Canvas::new(w as u32 + 8, (y0 + h) as u32 + 2);
-            let mut hits = Hits::default();
-            computer(
-                &mut c,
-                rect,
-                full,
-                [0; 6],
-                None,
-                GLOW,
-                &NonePressed,
-                &mut hits,
-            );
-            assert_eq!(old.zones.len(), hits.zones.len());
-            for ((er, eh), (r, h)) in old.zones.iter().zip(&hits.zones) {
-                assert_eq!(conv(*eh), *h);
-                let d = (er.min.x - r.min.x).abs()
-                    + (er.min.y - r.min.y).abs()
-                    + (er.max.x - r.max.x).abs()
-                    + (er.max.y - r.max.y).abs();
-                assert!(d < 1e-3, "{h:?}: {er:?} ≠ {r:?}");
             }
         }
     }
