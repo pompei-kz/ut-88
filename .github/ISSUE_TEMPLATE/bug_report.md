@@ -1,33 +1,34 @@
 ---
-name: Bug report
-about: Something in the emulator does not work as expected
+name: Сообщение об ошибке
+about: Что-то в эмуляторе работает не так, как ожидалось
 title: ""
 labels: bug
 assignees: ""
 ---
 
-**What happened**
+**Что произошло**
 
-A clear description of the problem.
+Понятное описание проблемы.
 
-**How to reproduce**
+**Как воспроизвести**
 
-1. Command (for example `make full` or `target/release/ut88 --config minimal --load …`)
-2. Keys pressed / directives typed
-3. What appears on the screen or LEDs
+1. Команда (например, `make full` или `target/release/ut88 --config minimal --load …`)
+2. Нажатые клавиши / введённые директивы
+3. Что появляется на экране или индикаторах
 
-**What you expected**
+**Что ожидалось**
 
-What the original UT-88 or the magazine says should happen (issue and page, or the
-`doc/` file, if you know them).
+Что должно происходить на настоящем ЮТ-88 или по журналу (номер и страница или файл в
+`doc/`, если известны).
 
-**Environment**
+**Окружение**
 
-- OS and desktop (X11 / Wayland) or terminal:
-- Window or terminal interface (`--tui`):
-- Rust version (`rustc --version`):
-- Commit (`git rev-parse --short HEAD`):
+- ОС и рабочий стол (X11 / Wayland) или терминал:
+- Оконный или терминальный интерфейс (`--tui`):
+- Версия Rust (`rustc --version`):
+- Коммит (`git rev-parse --short HEAD`):
 
-**Additional context**
+**Дополнительно**
 
-Screenshots, a snapshot file (F6 → `ut88-quick.snap`), WAV files, log output.
+Снимки экрана, файл снимка состояния (F6 → `ut88-quick.snap`), файлы WAV, вывод журнала
+программы.

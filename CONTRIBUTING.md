@@ -1,61 +1,63 @@
-# Contributing
+# Участие в проекте
 
-Thank you for your interest in the UT-88 emulator! Bug reports, fixes of the magazine
-transcriptions and new features are welcome.
+Спасибо за интерес к эмулятору ЮТ-88! Приветствуются сообщения об ошибках, исправления
+расшифровок журнала и новые возможности.
 
-## Building and running
+## Сборка и запуск
 
-You need a Rust toolchain with `cargo` ([rustup](https://rustup.rs)), GNU make and, on
-Linux, the ALSA development package — see [Requirements](README.md#requirements).
+Нужны Rust с `cargo` ([rustup](https://rustup.rs)), GNU make и, в Linux, пакет
+разработки ALSA — см. раздел «Требования» в [README.md](README.md).
 
 ```sh
 make            # cargo build --release
-make help       # list of all make commands
-make full       # run the emulator
+make help       # список всех команд make
+make full       # запуск эмулятора
 ```
 
-## Before sending a change
+## Перед отправкой изменений
 
 ```sh
 make test       # cargo test
 make lint       # cargo clippy --all-targets -- -D warnings; cargo fmt --check
-make fmt        # format the code
+make fmt        # форматирование кода
 ```
 
-- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` must be clean; CI
-  runs both together with the build and the tests.
-- New behaviour should come with a test. The machine is tested headless through
-  `ut88-core` (`crates/ut88-core/tests/`), the window through `egui_kittest`.
-- Long tests (the 8080 instruction exerciser, the Tetris move search) are marked
-  `#[ignore]`; run them with `make test-all` when you touch the CPU or the keyboard.
-- Behaviour of the original hardware and ROMs is reproduced as printed in the
-  magazine, including its bugs. If you change it, describe the reason and the source
-  (magazine issue and page, `doc/` file).
+- `cargo fmt --check` и `cargo clippy --all-targets -- -D warnings` должны проходить
+  чисто; CI запускает обе проверки вместе со сборкой и тестами.
+- Новое поведение должно сопровождаться тестом. Машина тестируется без окна через
+  `ut88-core` (`crates/ut88-core/tests/`), окно — через `egui_kittest`.
+- Долгие тесты (тестер команд 8080, поиск ходов в «Тетрисе») помечены `#[ignore]`;
+  запускайте их командой `make test-all`, если меняете процессор или клавиатуру.
+- Поведение оригинальной аппаратуры и ПЗУ воспроизводится так, как напечатано в
+  журнале, включая его ошибки. Если вы его меняете, укажите причину и источник (номер
+  журнала и страницу, файл в `doc/`).
 
-## Conventions
+## Правила
 
-The project's working rules are in [CLAUDE.md](CLAUDE.md) (in Russian). In short:
+Правила работы с проектом — в [CLAUDE.md](CLAUDE.md). Кратко:
 
-- **Commit messages:** `TYPE(short-comment) : short description` on the first line,
-  an empty line, then the details. `TYPE` is one of `doc`, `feat`, `fix`, `test`,
-  `build`, `plan`, `rules`, `refactor`, `prompt`, `devi`, `todo` (see the table in CLAUDE.md); `short-comment`
-  is a few Latin words joined by hyphens. Changes of different types go into separate
-  commits. The project writes descriptions in Russian.
-- **Markdown tables** are aligned: every column is padded with spaces so that the `|`
-  characters line up in the source, and the separator row is stretched to the column
-  width keeping the alignment colons.
-- **Tasks, plans and deviations** live in `plans/NN-short-comment/`: the task
-  statement (`NN-prompt-….txt`), the plan (`NN-plan-….md`, with a status line) and a log
-  of deviations from the plan (`NN-deviations-….md`).
+- **Сообщения коммитов:** первая строка — `TYPE(short-comment) : краткое описание`,
+  затем пустая строка и подробности. `TYPE` — один из `doc`, `feat`, `fix`, `optim`,
+  `test`, `build`, `plan`, `rules`, `refactor`, `prompt`, `devi`, `todo` (см. таблицу в
+  CLAUDE.md); `short-comment` — несколько латинских слов через дефис. Изменения разных
+  типов идут в отдельные коммиты. Описания пишутся по-русски.
+- **Таблицы Markdown** выравниваются: каждый столбец дополняется пробелами, чтобы
+  символы `|` стояли друг под другом в исходном тексте, а строка-разделитель
+  растягивается на ширину столбца с сохранением двоеточий выравнивания
+  (`scripts/align-md.py`, `make align-md`).
+- **Задания, планы и отклонения** лежат в `plans/NN-short-comment/`: постановка задачи
+  (`NN-prompt-….txt`), план (`NN-plan-….md`, со строкой статуса) и журнал отклонений
+  от плана (`NN-deviations-….md`).
 
-## Documentation
+## Документация
 
-- [README.md](README.md) — quick start (English);
-- [docs/MANUAL.md](docs/MANUAL.md) and [manual.md](manual.md) — the user manual in
-  English and Russian; keep them in sync when you change the user interface;
-- [doc/](doc/README.md) — the magazine articles (Russian).
+- [README.md](README.md) — быстрый старт;
+- [manual.md](manual.md) — руководство пользователя; обновляйте его, когда меняете
+  интерфейс;
+- [doc/43-assembler.md](doc/43-assembler.md) — руководство по ассемблеру и компоновщику;
+- [doc/](doc/README.md) — статьи журнала.
 
-## License
+## Лицензия
 
-By contributing you agree that your contributions are dual licensed under MIT OR
-Apache-2.0, as described in [README.md](README.md#license).
+Отправляя изменения, вы соглашаетесь, что они распространяются под двойной лицензией
+MIT OR Apache-2.0, как описано в [README.md](README.md).

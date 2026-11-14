@@ -1,65 +1,63 @@
-# Notice: third-party materials
+# Уведомление: сторонние материалы
 
-The source code of this emulator is licensed under MIT OR Apache-2.0 (see
-[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE)). **That license does
-not apply to the materials listed below**: they belong to their respective right
-holders and are included only for research, educational and historical purposes —
-to document and preserve a computer that was published for amateurs to build, and to
-let the emulator run the software that was printed for it.
+Исходный код эмулятора распространяется под лицензией MIT OR Apache-2.0 (см.
+[LICENSE-MIT](LICENSE-MIT) и [LICENSE-APACHE](LICENSE-APACHE)). **Эта лицензия не
+распространяется на перечисленные ниже материалы**: они принадлежат своим
+правообладателям и включены только в исследовательских, образовательных и исторических
+целях — чтобы описать и сохранить компьютер, опубликованный для самостоятельной сборки
+радиолюбителями, и чтобы эмулятор мог запускать напечатанные для него программы.
 
-If you are a right holder and object to any of these materials being here, please open
-an issue or contact the repository owner, and they will be removed.
+Если вы правообладатель и возражаете против размещения здесь каких-либо из этих
+материалов, откройте issue или свяжитесь с владельцем репозитория, и они будут удалены.
 
-## Magazine «ЮТ для умелых рук» (1989–1990)
+## Журнал «ЮТ для умелых рук» (1989–1990)
 
-The UT-88 computer, its schematics, ROMs and programs were published in the magazine
-«ЮТ для умелых рук» («Young Technician — for Skilful Hands»), a supplement to the
-magazine «Юный техник» (*Young Technician*), Moscow, issues of 1989 No. 2 – 1990 No. 5.
-The computer was designed by V. Bartenev and the radio electronics club of the
-Ramenskoye House of Pioneers on request of the editorial office. All rights to these
-publications belong to the editorial office of «Юный техник» and to the authors of
-the articles.
+Компьютер ЮТ-88, его схемы, ПЗУ и программы опубликованы в журнале «ЮТ для умелых рук» —
+приложении к журналу «Юный техник», Москва, номера с 1989 № 2 по 1990 № 5. Компьютер
+разработали В. Бартенев и радиоэлектронный кружок Раменского Дома пионеров по заказу
+редакции. Все права на эти публикации принадлежат редакции журнала «Юный техник» и
+авторам статей.
 
-Materials in this repository derived from the magazine:
+Материалы репозитория, взятые из журнала:
 
-| Path                                 | What it is                                                                                                                   |
-|--------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| `doc/ЮТ для умелых рук 1989-02.djvu` | scan of the 1989 No. 2 issue                                                                                                 |
-| `doc/*.md`                           | the articles converted to Markdown (Russian), with editorial notes and analysis added for this project                       |
-| `doc/img/`                           | illustrations, schematics and photos from the magazine pages (some redrawn or rendered for this project)                     |
-| `roms/`                              | dumps typed in from the printed listings: MONITOR-F, character generator, calculator ROM, CP/M-64, CP/M-35, CH.COM, UT-88 OS |
-| `monitor/`                           | the module 1 MONITOR ROM: photos of the printed dump, the dump, a fixed image and a disassembly                              |
-| `programs/`                          | programs typed in from the printed dumps (games, tests, ROM programmer)                                                      |
+| Путь                                 | Что это                                                                                                                     |
+|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `doc/ЮТ для умелых рук 1989-02.djvu` | скан номера 1989 № 2                                                                                                        |
+| `doc/*.md`                           | статьи, переведённые в Markdown, с редакционными примечаниями и разбором, добавленными для проекта                          |
+| `doc/img/`                           | иллюстрации, схемы и фотографии со страниц журнала (некоторые перерисованы или построены для проекта)                       |
+| `roms/`                              | дампы, набранные по напечатанным листингам: МОНИТОР-F, знакогенератор, ПЗУ калькулятора, CP/M-64, CP/M-35, CH.COM, ОС ЮТ-88 |
+| `monitor/`                           | ПЗУ МОНИТОРА модуля 1: фотографии напечатанного дампа, дамп, исправленный образ и дизассемблированный текст                 |
+| `programs/`                          | программы, набранные по напечатанным дампам (игры, тесты, программатор ПЗУ)                                                 |
 
-The printed listings were transcribed and checked against the checksums where the
-magazine gave them; deviations and fixes are documented in `doc/` and
-`programs/README.md`. The disassemblies and annotations are the project's own work, but
-they describe code that belongs to the original authors.
+Напечатанные листинги расшифрованы и сверены с контрольными суммами там, где журнал их
+приводит; отклонения и исправления описаны в `doc/` и `programs/README.md`.
+Дизассемблированные тексты и комментарии к ним — собственная работа проекта, но они
+описывают код, принадлежащий авторам оригинала.
 
-The ROM and system images from `roms/` and `monitor/` are embedded into the `ut88`
-binary (`crates/ut88-core/src/roms.rs`), so binaries built from this repository contain
-them too; the same terms apply.
+Образы ПЗУ и систем из `roms/` и `monitor/` встроены в программу `ut88`
+(`crates/ut88-core/src/roms.rs`), поэтому собранные из репозитория программы тоже их
+содержат; на них распространяются те же условия.
 
 ### CP/M 2.2
 
-The CP/M-64 and CP/M-35 images in `roms/` contain CP/M 2.2 (CCP and BDOS) by Digital
-Research, adapted for the UT-88 as printed in the magazine. CP/M is a trademark of
-Digital Research / its successors. The CP/M 2.2 code is included on the same terms as
-the rest of the magazine material.
+Образы CP/M-64 и CP/M-35 в `roms/` содержат CP/M 2.2 (CCP и BDOS) фирмы Digital
+Research, адаптированную для ЮТ-88 так, как напечатано в журнале. CP/M — товарный знак
+Digital Research и её правопреемников. Код CP/M 2.2 включён на тех же условиях, что и
+остальные материалы журнала.
 
-## 8080 test programs (`crates/i8080/tests/roms/`)
+## Тестовые программы 8080 (`crates/i8080/tests/roms/`)
 
-Classic CP/M test programs for the Intel 8080, used by the CPU integration tests. They
-were downloaded from Nicolas Allemand's repository
-[superzazu/8080](https://github.com/superzazu/8080) (folder `cpu_tests/`); the MIT
-license of that repository covers its emulator code, not these programs. Details and
-checksums are in [crates/i8080/tests/roms/README.md](crates/i8080/tests/roms/README.md).
+Классические тестовые программы CP/M для Intel 8080, используемые интеграционными
+тестами процессора. Они скачаны из репозитория Nicolas Allemand
+[superzazu/8080](https://github.com/superzazu/8080) (папка `cpu_tests/`); лицензия MIT
+этого репозитория относится к коду его эмулятора, а не к этим программам. Подробности и
+контрольные суммы — в [crates/i8080/tests/roms/README.md](crates/i8080/tests/roms/README.md).
 
-| File          | Program and authors                                                                                                             | License                                                                               |
-|---------------|---------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| `TST8080.COM` | 8080/8085 CPU Diagnostic v1.0, Microcosm Associates (Kelly Smith), 1980, via the SIG/M library; additions by Mike Douglas, 2012 | freely distributed (public domain, SIG/M)                                             |
-| `8080PRE.COM` | preliminary test for the 8080 Exerciser; Frank D. Cringle, Ian Bartholomew                                                      | GNU GPL v2 or later                                                                   |
-| `8080EXM.COM` | 8080 Instruction Exerciser, port of zexlax.z80 (Frank D. Cringle, 1994) by Ian Bartholomew, 2009                                | GNU GPL v2 or later                                                                   |
-| `CPUTEST.COM` | DIAGNOSTICS II V1.2 — CPU TEST, SuperSoft Associates, 1981                                                                      | commercial program, widely distributed with emulator test suites; no explicit license |
+| Файл          | Программа и авторы                                                                                                          | Лицензия                                                                                        |
+|---------------|-----------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `TST8080.COM` | 8080/8085 CPU Diagnostic v1.0, Microcosm Associates (Kelly Smith), 1980, из библиотеки SIG/M; дополнения Mike Douglas, 2012 | свободно распространяется (public domain, SIG/M)                                                |
+| `8080PRE.COM` | предварительный тест для 8080 Exerciser; Frank D. Cringle, Ian Bartholomew                                                  | GNU GPL v2 или более поздняя                                                                    |
+| `8080EXM.COM` | 8080 Instruction Exerciser, перенос zexlax.z80 (Frank D. Cringle, 1994), выполненный Ian Bartholomew, 2009                  | GNU GPL v2 или более поздняя                                                                    |
+| `CPUTEST.COM` | DIAGNOSTICS II V1.2 — CPU TEST, SuperSoft Associates, 1981                                                                  | коммерческая программа, широко распространяется в наборах тестов эмуляторов; явной лицензии нет |
 
-These files are test data only: they are not compiled into the emulator binary.
+Эти файлы — только тестовые данные: в программу эмулятора они не компилируются.
