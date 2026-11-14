@@ -1,20 +1,26 @@
-//! Графический интерфейс эмулятора ЮТ-88 (eframe/egui).
+//! Графический интерфейс эмулятора ЮТ-88: окно на winit, кадр рисуется программно
+//! (tiny-skia, вшитые шрифты DejaVu) и выводится через softbuffer — без OpenGL.
 //!
 //! Окно рисует компьютер «как на фотографиях журнала»: корпус процессорного модуля с
 //! шестью красными семисегментными индикаторами и клавиатурой 4 × 4 + «ШАГ НАЗАД» +
 //! «УСТ», а для полной конфигурации — ещё телевизор-монитор с экраном дисплейного модуля и
 //! полную клавиатуру по рис. 2 из 1989-05. Меню: сброс, холодный старт, пауза, скорость,
 //! магнитофон, снимки, программы из `programs/`, CP/M и ОС ЮТ-88 (квазидиск, файлы на
-//! диске CP/M), звук (громкость запоминается, см. [`settings`]), конфигурация; отдельное окно отладчика. Горячие клавиши F2–F12 — те же, что в TUI (см. [`keymap::HOTKEYS`]).
+//! диске CP/M), звук (громкость запоминается, см. [`settings`]), конфигурация; отдельное
+//! окно отладчика. Горячие клавиши F2–F12 — те же, что в TUI (см. [`keymap::HOTKEYS`]).
+//!
+//! Устройство: [`gfx`] — холст и текст, [`picture`] — рисунок компьютера, [`ui`] —
+//! виджеты в немедленном режиме, [`app`] — кадр окна (не зависит от winit, тесты гоняют
+//! его стендом [`ui::testing::Harness`]), [`platform`] — окна winit и цикл кадров.
 
 pub mod app;
 pub mod debugger;
 pub mod dialogs;
-pub mod draw;
 pub mod gfx;
 pub mod keymap;
 pub mod loader;
 pub mod picture;
+pub mod platform;
 pub mod settings;
 pub mod ui;
 
@@ -79,24 +85,7 @@ pub struct GuiOptions {
 /// Открыть окно эмулятора и работать до его закрытия.
 pub fn run(opts: GuiOptions) -> anyhow::Result<()> {
     let full = opts.machine.config().display.is_some();
-    let size = if full {
-        [1280.0, 900.0]
-    } else {
-        [720.0, 680.0]
-    };
-    let native = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("ЮТ-88")
-            .with_inner_size(size)
-            .with_min_inner_size([480.0, 400.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "ЮТ-88",
-        native,
-        Box::new(move |_cc| Ok(Box::new(app::App::new(opts)))),
-    )
-    .map_err(|e| anyhow::anyhow!("окно не открылось: {e}"))
+    platform::run(app::App::new(opts), full)
 }
 
 #[cfg(test)]

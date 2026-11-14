@@ -12,12 +12,32 @@ pub trait FileDialogs {
     fn pick_save(&mut self, name: &str, exts: &[&str], default: &str) -> Option<PathBuf>;
 }
 
-/// Настоящие системные диалоги (`rfd`).
-pub struct RfdDialogs;
+/// Настоящие системные диалоги (`rfd`), по возможности привязанные к окну эмулятора.
+#[derive(Default)]
+pub struct RfdDialogs {
+    parent: Option<std::rc::Rc<winit::window::Window>>,
+}
+
+impl RfdDialogs {
+    /// Диалоги поверх окна `parent`.
+    pub fn with_parent(parent: std::rc::Rc<winit::window::Window>) -> Self {
+        Self {
+            parent: Some(parent),
+        }
+    }
+
+    fn dialog(&self) -> rfd::FileDialog {
+        let d = rfd::FileDialog::new();
+        match &self.parent {
+            Some(w) => d.set_parent(w.as_ref()),
+            None => d,
+        }
+    }
+}
 
 impl FileDialogs for RfdDialogs {
     fn pick_open(&mut self, name: &str, exts: &[&str]) -> Option<PathBuf> {
-        rfd::FileDialog::new()
+        self.dialog()
             .add_filter(name, exts)
             .add_filter("Все файлы", &["*"])
             .set_directory(std::env::current_dir().unwrap_or_default())
@@ -25,7 +45,7 @@ impl FileDialogs for RfdDialogs {
     }
 
     fn pick_save(&mut self, name: &str, exts: &[&str], default: &str) -> Option<PathBuf> {
-        rfd::FileDialog::new()
+        self.dialog()
             .add_filter(name, exts)
             .set_file_name(default)
             .set_directory(std::env::current_dir().unwrap_or_default())

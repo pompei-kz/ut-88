@@ -1,8 +1,16 @@
 //! Отладчик: точки останова, пошаговое выполнение, окно с регистрами, дизассемблером
 //! и дампом памяти.
+//!
+//! Окно отладчика — отдельное окно ОС со своим контекстом виджетов; [`Debugger::frame`]
+//! рисует его кадр в любом [`Ctx`] и не зависит от winit (в тестах — стенд без окна).
 
-use eframe::egui::{self, RichText};
 use ut88_core::Machine;
+
+use crate::gfx::Color;
+use crate::ui::{
+    CentralPanel, ComboBox, Ctx, Grid, KeyCode, Label, RichText, ScrollArea, Sense, TextEdit,
+    TextStyle, Ui,
+};
 
 use crate::loader::parse_hex_u16;
 
@@ -169,43 +177,19 @@ impl Debugger {
         }
     }
 
-    /// Нарисовать окно отладчика — отдельное окно ОС (если платформа не умеет — окно
-    /// внутри главного). `paused` — эмуляция стоит.
-    pub fn window(&mut self, ctx: &egui::Context, m: &mut Machine, paused: bool) -> DbgAction {
-        let builder = egui::ViewportBuilder::default()
-            .with_title("ЮТ-88 — отладчик")
-            .with_inner_size([820.0, 760.0]);
-        ctx.show_viewport_immediate(
-            egui::ViewportId::from_hash_of("ut88-debugger"),
-            builder,
-            |ctx, class| {
-                let mut action = DbgAction::None;
-                if class == egui::ViewportClass::Embedded {
-                    let mut open = self.open;
-                    egui::Window::new("Отладчик")
-                        .open(&mut open)
-                        .default_size([760.0, 620.0])
-                        .vscroll(true)
-                        .show(ctx, |ui| {
-                            action = self.ui(ui, m, paused);
-                        });
-                    self.open = open;
-                } else {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            action = self.ui(ui, m, paused);
-                        });
-                    });
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        self.open = false;
-                    }
-                }
-                action
-            },
-        )
+    /// Кадр окна отладчика в контексте `ctx` (окно ОС «ЮТ-88 — отладчик» или стенд
+    /// тестов). `paused` — эмуляция стоит.
+    pub fn frame(&mut self, ctx: &Ctx, m: &mut Machine, paused: bool) -> DbgAction {
+        CentralPanel::default()
+            .show(ctx, |ui| {
+                ScrollArea::vertical()
+                    .id_salt("отладчик")
+                    .show(ui, |ui| self.ui(ui, m, paused))
+            })
+            .inner
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, m: &mut Machine, paused: bool) -> DbgAction {
+    fn ui(&mut self, ui: &mut Ui, m: &mut Machine, paused: bool) -> DbgAction {
         let mut action = DbgAction::None;
         ui.horizontal(|ui| {
             if paused {
@@ -231,9 +215,9 @@ impl Debugger {
             }
             ui.separator();
             ui.label("до адреса:");
-            let r = ui.add(egui::TextEdit::singleline(&mut self.run_to_input).desired_width(50.0));
+            let r = ui.add(TextEdit::singleline(&mut self.run_to_input).desired_width(50.0));
             let go = ui.button("Пуск до").clicked()
-                || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                || (r.lost_focus() && ui.input(|i| i.key_pressed(KeyCode::Enter)));
             if go {
                 match parse_hex_u16(&self.run_to_input) {
                     Ok(a) => action = DbgAction::RunTo(a),
@@ -242,10 +226,10 @@ impl Debugger {
             }
         });
         if let Some(r) = &self.stop_reason {
-            ui.label(RichText::new(format!("Останов: {r}")).color(egui::Color32::LIGHT_RED));
+            ui.label(RichText::new(format!("Останов: {r}")).color(Color::LIGHT_RED));
         }
         if !self.message.is_empty() {
-            ui.label(RichText::new(&self.message).color(egui::Color32::YELLOW));
+            ui.label(RichText::new(&self.message).color(Color::YELLOW));
         }
         ui.separator();
 
@@ -260,7 +244,7 @@ impl Debugger {
         action
     }
 
-    fn registers(&mut self, ui: &mut egui::Ui, m: &mut Machine, paused: bool) {
+    fn registers(&mut self, ui: &mut Ui, m: &mut Machine, paused: bool) {
         let c = &m.cpu;
         ui.heading("Регистры");
         // Поля ввода обновляются, когда процессор сдвинулся.
@@ -277,14 +261,14 @@ impl Debugger {
         }
         const NAMES: [&str; 6] = ["PSW", "BC", "DE", "HL", "SP", "PC"];
         let mut changed: Option<(usize, u16)> = None;
-        egui::Grid::new("regs").num_columns(2).show(ui, |ui| {
+        Grid::new("regs").num_columns(2).show(ui, |ui| {
             for (i, name) in NAMES.iter().enumerate() {
                 ui.monospace(*name);
                 let r = ui.add_enabled(
                     paused,
-                    egui::TextEdit::singleline(&mut self.reg_inputs[i])
+                    TextEdit::singleline(&mut self.reg_inputs[i])
                         .desired_width(50.0)
-                        .font(egui::TextStyle::Monospace),
+                        .font(TextStyle::Monospace),
                 );
                 if r.lost_focus()
                     && let Ok(v) = parse_hex_u16(&self.reg_inputs[i])
@@ -343,13 +327,13 @@ impl Debugger {
         });
     }
 
-    fn breakpoints_ui(&mut self, ui: &mut egui::Ui) {
+    fn breakpoints_ui(&mut self, ui: &mut Ui) {
         ui.heading("Точки останова");
         ui.horizontal(|ui| {
             ui.label("адрес:");
-            let r = ui.add(egui::TextEdit::singleline(&mut self.bp_input).desired_width(50.0));
+            let r = ui.add(TextEdit::singleline(&mut self.bp_input).desired_width(50.0));
             if (ui.button("+").clicked()
-                || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
+                || (r.lost_focus() && ui.input(|i| i.key_pressed(KeyCode::Enter))))
                 && let Ok(a) = parse_hex_u16(&self.bp_input)
                 && !self.breakpoints.contains(&a)
             {
@@ -371,8 +355,8 @@ impl Debugger {
         }
         ui.horizontal(|ui| {
             ui.label("порт:");
-            ui.add(egui::TextEdit::singleline(&mut self.port_input).desired_width(30.0));
-            egui::ComboBox::from_id_salt("portdir")
+            ui.add(TextEdit::singleline(&mut self.port_input).desired_width(30.0));
+            ComboBox::from_id_salt("portdir")
                 .width(60.0)
                 .selected_text(match self.port_dir {
                     PortDir::In => "IN",
@@ -414,7 +398,7 @@ impl Debugger {
         ui.small("Порт проверяется у команд IN/OUT перед выполнением.");
     }
 
-    fn disassembly(&mut self, ui: &mut egui::Ui, m: &Machine) {
+    fn disassembly(&mut self, ui: &mut Ui, m: &Machine) {
         ui.heading("Дизассемблер");
         let pc = m.cpu.pc;
         for (addr, len, text) in disasm_around(m, pc, 8, 18) {
@@ -430,11 +414,11 @@ impl Debugger {
             let line = format!("{bp}{mark}{addr:04X}  {bytes:<9} {text}");
             let mut rt = RichText::new(line).monospace();
             if addr == pc {
-                rt = rt.color(egui::Color32::from_rgb(0x60, 0xFF, 0x60)).strong();
+                rt = rt.color(Color::from_rgb(0x60, 0xFF, 0x60)).strong();
             } else if self.breakpoints.contains(&addr) {
-                rt = rt.color(egui::Color32::LIGHT_RED);
+                rt = rt.color(Color::LIGHT_RED);
             }
-            let r = ui.add(egui::Label::new(rt).sense(egui::Sense::click()));
+            let r = ui.add(Label::new(rt).sense(Sense::click()));
             if r.on_hover_text("щелчок — точка останова").clicked() {
                 if let Some(i) = self.breakpoints.iter().position(|&b| b == addr) {
                     self.breakpoints.remove(i);
@@ -446,12 +430,11 @@ impl Debugger {
         }
     }
 
-    fn memory(&mut self, ui: &mut egui::Ui, m: &mut Machine) {
+    fn memory(&mut self, ui: &mut Ui, m: &mut Machine) {
         ui.heading("Память");
         ui.horizontal(|ui| {
             ui.label("адрес:");
-            let r =
-                ui.add(egui::TextEdit::singleline(&mut self.mem_addr_input).desired_width(50.0));
+            let r = ui.add(TextEdit::singleline(&mut self.mem_addr_input).desired_width(50.0));
             if (r.lost_focus() || ui.button("Показать").clicked())
                 && let Ok(a) = parse_hex_u16(&self.mem_addr_input)
             {
@@ -496,10 +479,10 @@ impl Debugger {
         ui.label(RichText::new(text).monospace());
         ui.horizontal(|ui| {
             ui.label("Записать с адреса");
-            ui.add(egui::TextEdit::singleline(&mut self.edit_addr_input).desired_width(50.0));
+            ui.add(TextEdit::singleline(&mut self.edit_addr_input).desired_width(50.0));
             ui.label("байты:");
             ui.add(
-                egui::TextEdit::singleline(&mut self.edit_bytes_input)
+                TextEdit::singleline(&mut self.edit_bytes_input)
                     .desired_width(260.0)
                     .hint_text("3E 55 C9"),
             );

@@ -1,10 +1,13 @@
 //! Окно эмулятора: рисунок компьютера, меню, синхронизация с реальным временем.
+//!
+//! Кадр окна строит [`App::frame`] в контексте виджетов [`Ctx`] и не зависит от winit:
+//! окно ОС и цикл кадров — в [`crate::platform`], а тесты гоняют кадры стендом
+//! [`crate::ui::testing::Harness`] без окна.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use ut88_audio::Audio;
 use ut88_core::{
     CPU_HZ, Config, CpmDisk, FRAME_CYCLES, KbKey, Machine, PadKey, System, TapeFormat, screen,
@@ -12,10 +15,15 @@ use ut88_core::{
 
 use crate::debugger::{DbgAction, Debugger};
 use crate::dialogs::{FileDialogs, RfdDialogs};
-use crate::draw::{self, Hit, Hits, Xf};
+use crate::gfx::{Canvas, Color, Pos2, Rect};
 use crate::keymap;
 use crate::loader::{self, ProgramInfo, parse_hex_u16};
+use crate::picture::{self, Hit, Hits, Layout};
 use crate::settings::{self, Settings};
+use crate::ui::{
+    Button, CentralPanel, Ctx, CursorIcon, Event, Frame, Grid, KeyCode, MenuBar, Order, RichText,
+    Sense, Slider, TextEdit, TopBottomPanel, Ui, Window,
+};
 use crate::{GuiOptions, Speed};
 
 /// Минимальное время удержания клавиши после щелчка мышью, с (эмулированного времени).
@@ -70,6 +78,50 @@ impl Phosphor {
             Phosphor::White => ([0xE8, 0xEC, 0xF0, 0xFF], [0x10, 0x10, 0x12, 0xFF]),
         }
     }
+
+    /// Цвет свечения стекла телевизора.
+    fn glow(self) -> Color {
+        let (fg, _) = self.colors();
+        Color::from_rgb(fg[0], fg[1], fg[2])
+    }
+}
+
+/// От чего зависит кэш-слой рисунка компьютера (кроме нажатых клавиш).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LayerKey {
+    /// Прямоугольник рисунка, логические точки.
+    rect: Rect,
+    /// Размер холста кадра, физические пиксели.
+    size: (u32, u32),
+    /// Масштаб HiDPI.
+    ppp: f32,
+    /// Полная конфигурация (телевизор и клавиатура).
+    full: bool,
+    /// Люминофор (цвет свечения погасшего экрана).
+    phosphor: Phosphor,
+}
+
+/// Кэш-слой статической части рисунка компьютера ([`picture::computer_static`]):
+/// холст размером с кадр, рисунок на своём месте. Слой перерисовывается целиком при смене
+/// [`LayerKey`], а при нажатии и отпускании клавиши — только эта клавиша
+/// ([`picture::redraw_key`]). Каждый кадр слой копируется в кадр, а поверх рисуется
+/// живая часть ([`picture::computer_live`]).
+#[derive(Default)]
+struct PictureCache {
+    /// Слой (`None` — ещё не рисовался).
+    canvas: Option<Canvas>,
+    /// Для чего нарисован слой.
+    key: Option<LayerKey>,
+    /// Раскладка рисунка.
+    layout: Option<Layout>,
+    /// Зоны нажатия и вид клавиш слоя.
+    hits: Hits,
+    /// Клавиши, нарисованные на слое нажатыми.
+    down: HashSet<Hit>,
+    /// Сколько раз слой перерисован целиком.
+    full_redraws: u64,
+    /// Сколько раз перерисована одна клавиша.
+    key_redraws: u64,
 }
 
 /// Кто держит клавишу.
@@ -130,10 +182,16 @@ pub struct App {
     mouse_down: Option<Hit>,
     /// Клавиатура ПК управляет модулем 1 даже в полной конфигурации.
     pc_to_pad: bool,
-    screen_tex: Option<TextureHandle>,
+    /// Изображение экрана дисплейного модуля есть в [`App::screen_buf`].
+    screen_ok: bool,
+    /// Изображение экрана, RGBA 384 × 280 без умножения на альфу.
     screen_buf: Vec<u8>,
-    /// Люминофор, которым нарисована текстура экрана (`None` — перерисовать).
-    tex_phosphor: Option<Phosphor>,
+    /// Люминофор, которым нарисован экран (`None` — перерисовать).
+    screen_phosphor: Option<Phosphor>,
+    /// Кэш-слой рисунка компьютера.
+    pic: PictureCache,
+    /// Попросили выйти (F10): окно сохраняет квазидиск ([`App::on_exit`]) и закрывается.
+    quit_requested: bool,
     phosphor: Phosphor,
     dbg: Debugger,
     help_open: bool,
@@ -197,9 +255,11 @@ impl App {
             holds: HashMap::new(),
             mouse_down: None,
             pc_to_pad: false,
-            screen_tex: None,
+            screen_ok: false,
             screen_buf: vec![0; screen::WIDTH * screen::HEIGHT * 4],
-            tex_phosphor: None,
+            screen_phosphor: None,
+            pic: PictureCache::default(),
+            quit_requested: false,
             phosphor: Phosphor::Green,
             dbg: Debugger::default(),
             help_open: false,
@@ -219,7 +279,7 @@ impl App {
             error_popup: None,
             cpm_open: false,
             kvazidisk_file: opts.kvazidisk_file,
-            dialogs: Box::new(RfdDialogs),
+            dialogs: Box::new(RfdDialogs::default()),
             quick_snapshot: PathBuf::from(QUICK_SNAPSHOT),
             open_audio: Audio::new,
             settings,
@@ -340,7 +400,7 @@ impl App {
         self.dbg.run_to = None;
         self.dbg.stop_reason = None;
         self.dbg.mark_cycles = self.m.cycles();
-        self.tex_phosphor = None;
+        self.screen_phosphor = None;
         self.sync_sound_capture();
     }
 
@@ -414,31 +474,23 @@ impl App {
         matches!(h, Hit::Kb(KbKey::Rus | KbKey::Us | KbKey::Ss))
     }
 
-    /// Обработка мыши по зонам клавиш.
-    fn mouse_input(&mut self, ui: &egui::Ui, hits: &Hits) {
-        let (pos, down, pressed) = ui.input(|i| {
-            (
-                i.pointer.interact_pos(),
-                i.pointer.primary_down(),
-                i.pointer.primary_pressed(),
-            )
+    /// Обработка мыши по зонам клавиш (зоны — кэш-слоя рисунка). Нажатие действует,
+    /// только если над рисунком нет окна или меню и оно не закрывает открытое меню.
+    fn mouse_input(&mut self, ui: &Ui) {
+        let (pos, down, pressed) =
+            ui.input(|i| (i.interact_pos(), i.primary_down(), i.primary_pressed()));
+        let ctx = ui.ctx();
+        let on_picture = pos.is_some_and(|p| {
+            ctx.layer_id_at(p)
+                .is_none_or(|l| l.order == Order::Background)
         });
-        let over = pos.and_then(|p| {
-            hits.zones
-                .iter()
-                .rev()
-                .find(|z| z.0.contains(p))
-                .map(|z| z.1)
-        });
+        let over = pos.and_then(|p| self.pic.hits.at(p)).filter(|_| on_picture);
         if over.is_some() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            ctx.set_cursor_icon(CursorIcon::PointingHand);
         }
         if pressed
             && let Some(h) = over
-            && ui
-                .ctx()
-                .layer_id_at(pos.unwrap_or_default())
-                .is_none_or(|l| l.order == egui::Order::Background)
+            && !ctx.press_blocked()
         {
             if Self::is_modifier(h) {
                 // РУС/УС/СС мышью — «залипают» до следующей клавиши.
@@ -462,58 +514,33 @@ impl App {
         }
     }
 
-    /// Клавиатура ПК.
-    fn keyboard_input(&mut self, ctx: &egui::Context) {
+    /// Клавиатура ПК: физические коды клавиш (раскладка не важна). Пока фокус в поле
+    /// ввода, клавиши не нажимают кнопок ЮТ-88; горячие клавиши действуют всегда.
+    fn keyboard_input(&mut self, ctx: &Ctx) {
         let events = ctx.input(|i| i.events.clone());
         let typing = ctx.wants_keyboard_input();
         let to_kb = self.has_display() && !self.pc_to_pad;
         for ev in events {
             match ev {
-                egui::Event::Key {
-                    key,
-                    physical_key,
-                    pressed,
-                    repeat,
-                    modifiers,
-                    ..
-                } => {
-                    let key = physical_key.unwrap_or(key);
-                    if pressed && !repeat && self.hotkey(ctx, key, modifiers.shift) {
+                Event::Key(k) => {
+                    if k.pressed && !k.repeat && self.hotkey(k.key, k.modifiers.shift) {
                         continue;
                     }
                     let hit = if to_kb {
-                        keymap::kb_key(key).map(Hit::Kb)
+                        keymap::kb_key(k.key).map(Hit::Kb)
                     } else {
-                        keymap::pad_key(key).map(Hit::Pad)
+                        keymap::pad_key(k.key).map(Hit::Pad)
                     };
                     let Some(h) = hit else { continue };
-                    if pressed {
-                        if !repeat && !typing {
+                    if k.pressed {
+                        if !k.repeat && !typing {
                             self.press(h, false);
                         }
                     } else {
                         self.release(h, false);
                     }
                 }
-                // Ctrl+C/X/V egui превращает в команды буфера обмена и не присылает
-                // нажатие клавиши (отпускание приходит обычным событием) — а это УС+C,
-                // которым, например, заканчивают «Тетрис».
-                egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) if !typing => {
-                    let key = match ev {
-                        egui::Event::Copy => egui::Key::C,
-                        egui::Event::Cut => egui::Key::X,
-                        _ => egui::Key::V,
-                    };
-                    let hit = if to_kb {
-                        keymap::kb_key(key).map(Hit::Kb)
-                    } else {
-                        keymap::pad_key(key).map(Hit::Pad)
-                    };
-                    if let Some(h) = hit {
-                        self.press(h, false);
-                    }
-                }
-                egui::Event::WindowFocused(false) => self.release_all_pc(),
+                Event::WindowFocused(false) => self.release_all_pc(),
                 _ => {}
             }
         }
@@ -537,27 +564,26 @@ impl App {
     }
 
     /// Горячие клавиши — общая схема с TUI (см. [`keymap::HOTKEYS`]).
-    fn hotkey(&mut self, ctx: &egui::Context, key: egui::Key, shift: bool) -> bool {
+    fn hotkey(&mut self, key: KeyCode, shift: bool) -> bool {
         match key {
-            egui::Key::F2 => self.press(Hit::Pad(PadKey::Reset), false),
-            egui::Key::F3 => {
+            KeyCode::F2 => self.press(Hit::Pad(PadKey::Reset), false),
+            KeyCode::F3 => {
                 let c = self.m.cold_start_config();
                 self.cold_start(c);
             }
-            egui::Key::F4 => self.toggle_pause(),
-            egui::Key::F5 => self.change_speed(!shift),
+            KeyCode::F4 => self.toggle_pause(),
+            KeyCode::F5 => self.change_speed(!shift),
             // Некоторые раскладки присылают Shift+F5 как F17.
-            egui::Key::F17 => self.change_speed(false),
-            egui::Key::F6 => self.save_snapshot(&self.quick_snapshot.clone()),
-            egui::Key::F7 => self.load_snapshot(&self.quick_snapshot.clone()),
-            egui::Key::F8 => self.tape.open = !self.tape.open,
-            egui::Key::F9 => self.programs_open = !self.programs_open,
-            egui::Key::F10 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            egui::Key::F11 => self.help_open = !self.help_open,
-            egui::Key::F12 => self.dbg.open = !self.dbg.open,
+            KeyCode::F17 => self.change_speed(false),
+            KeyCode::F6 => self.save_snapshot(&self.quick_snapshot.clone()),
+            KeyCode::F7 => self.load_snapshot(&self.quick_snapshot.clone()),
+            KeyCode::F8 => self.tape.open = !self.tape.open,
+            KeyCode::F9 => self.programs_open = !self.programs_open,
+            KeyCode::F10 => self.quit_requested = true,
+            KeyCode::F11 => self.help_open = !self.help_open,
+            KeyCode::F12 => self.dbg.open = !self.dbg.open,
             _ => return false,
         }
-        ctx.request_repaint();
         true
     }
 
@@ -613,7 +639,7 @@ impl App {
         s
     }
 
-    fn tape_controls(&mut self, ui: &mut egui::Ui) {
+    fn tape_controls(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let ins = self.m.tape_inserted();
             let label = if self.m.tape_playing() {
@@ -621,13 +647,10 @@ impl App {
             } else {
                 "▶ Воспроизведение"
             };
-            if ui.add_enabled(ins, egui::Button::new(label)).clicked() {
+            if ui.add_enabled(ins, Button::new(label)).clicked() {
                 self.tape_play_toggle();
             }
-            if ui
-                .add_enabled(ins, egui::Button::new("⏮ В начало"))
-                .clicked()
-            {
+            if ui.add_enabled(ins, Button::new("⏮ В начало")).clicked() {
                 self.tape_rewind();
             }
             ui.label(self.tape_status());
@@ -874,8 +897,8 @@ impl App {
 
     // ----- меню -----
 
-    fn menu(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
+    fn menu(&mut self, ui: &mut Ui) {
+        MenuBar::new().ui(ui, |ui| {
             ui.menu_button("Машина", |ui| {
                 if ui.button("УСТ — сброс (F2)").clicked() {
                     self.press(Hit::Pad(PadKey::Reset), false);
@@ -893,9 +916,14 @@ impl App {
                 }
                 ui.separator();
                 ui.label("Скорость (F5 — выше, Shift+F5 — ниже):");
+                // Щелчок по переключателю или флажку закрывает меню, как и по кнопке.
                 for s in Speed::all() {
-                    if ui.radio_value(&mut self.speed, s, s.label()).changed() {
+                    let r = ui.radio_value(&mut self.speed, s, s.label());
+                    if r.changed() {
                         self.debt = 0.0;
+                    }
+                    if r.clicked() {
+                        ui.close();
                     }
                 }
                 ui.separator();
@@ -913,26 +941,35 @@ impl App {
                     }
                 }
                 let mut irq = self.m.config().clock_interrupts;
-                if ui
+                let r = ui
                     .checkbox(&mut irq, "Прерывания от часов")
-                    .on_hover_text("тумблер из doc/25: при работе с магнитофоном через МОНИТОР модуля 1 их отключают")
-                    .changed()
-                {
+                    .on_hover_text("тумблер из doc/25: при работе с магнитофоном через МОНИТОР модуля 1 их отключают");
+                if r.changed() {
                     self.m.set_clock_interrupts(irq);
+                }
+                if r.clicked() {
+                    ui.close();
                 }
                 if self.has_display() {
                     let mut rom = self.m.config().monitor_f_rom;
-                    if ui
+                    let r = ui
                         .checkbox(&mut rom, "ПЗУ МОНИТОРА-F (сегмент F000H–FFFFH)")
                         .on_hover_text(
                             "тумблер из doc/30: выключенное ПЗУ отдаёт F000H–FFFFH модулю ОЗУ — \
                              так работает ОС ЮТ-88",
-                        )
-                        .changed()
-                    {
+                        );
+                    if r.changed() {
                         self.m.set_monitor_f_rom(rom);
                     }
-                    ui.checkbox(&mut self.pc_to_pad, "Клавиатура ПК → кнопки модуля 1");
+                    if r.clicked() {
+                        ui.close();
+                    }
+                    if ui
+                        .checkbox(&mut self.pc_to_pad, "Клавиатура ПК → кнопки модуля 1")
+                        .clicked()
+                    {
+                        ui.close();
+                    }
                 }
             });
             ui.menu_button("Магнитофон", |ui| {
@@ -951,15 +988,15 @@ impl App {
                 } else {
                     "Воспроизведение"
                 };
-                if ui.add_enabled(ins, egui::Button::new(label)).clicked() {
+                if ui.add_enabled(ins, Button::new(label)).clicked() {
                     self.tape_play_toggle();
                     ui.close();
                 }
-                if ui.add_enabled(ins, egui::Button::new("Перемотать в начало")).clicked() {
+                if ui.add_enabled(ins, Button::new("Перемотать в начало")).clicked() {
                     self.tape_rewind();
                     ui.close();
                 }
-                if ui.add_enabled(ins, egui::Button::new("Вынуть кассету")).clicked() {
+                if ui.add_enabled(ins, Button::new("Вынуть кассету")).clicked() {
                     self.m.tape_eject();
                     self.say("Кассета вынута");
                     ui.close();
@@ -1039,7 +1076,11 @@ impl App {
             });
             ui.menu_button("Вид", |ui| {
                 let mut on = self.audio.enabled() && self.audio.is_available();
-                if ui.checkbox(&mut on, "Звук").changed() {
+                let r = ui.checkbox(&mut on, "Звук");
+                if r.clicked() {
+                    ui.close();
+                }
+                if r.changed() {
                     if on && !self.audio.is_available() {
                         self.audio = (self.open_audio)();
                         if let Some(e) = self.audio.error() {
@@ -1055,7 +1096,7 @@ impl App {
                 }
                 let mut vol = self.audio.volume();
                 if ui
-                    .add(egui::Slider::new(&mut vol, 0.0..=1.0).text("громкость"))
+                    .add(Slider::new(&mut vol, 0.0..=1.0).text("громкость"))
                     .changed()
                 {
                     self.audio.set_volume(vol);
@@ -1063,8 +1104,11 @@ impl App {
                 }
                 ui.separator();
                 ui.label("Люминофор:");
-                ui.radio_value(&mut self.phosphor, Phosphor::Green, "зелёный");
-                ui.radio_value(&mut self.phosphor, Phosphor::White, "белый");
+                for (ph, label) in [(Phosphor::Green, "зелёный"), (Phosphor::White, "белый")] {
+                    if ui.radio_value(&mut self.phosphor, ph, label).clicked() {
+                        ui.close();
+                    }
+                }
                 ui.separator();
                 if ui.button("Отладчик (F12)").clicked() {
                     self.dbg.open = true;
@@ -1085,7 +1129,7 @@ impl App {
     }
 
     /// Список программ из `programs/` с кнопками загрузки (в меню и в окне F9).
-    fn programs_list(&mut self, ui: &mut egui::Ui, in_menu: bool) {
+    fn programs_list(&mut self, ui: &mut Ui, in_menu: bool) {
         if self.programs.is_empty() {
             ui.label("папка programs/ не найдена");
         }
@@ -1099,16 +1143,16 @@ impl App {
                 p.load,
                 p.start.map(|s| format!("{s:04X}")).unwrap_or("—".into())
             );
-            let mut buttons = |ui: &mut egui::Ui| {
+            let mut buttons = |ui: &mut Ui| {
                 let mut clicked = false;
-                if ui.add_enabled(ok, egui::Button::new("Загрузить")).clicked() {
+                if ui.add_enabled(ok, Button::new("Загрузить")).clicked() {
                     self.load_program(p, false);
                     clicked = true;
                 }
                 if ui
                     .add_enabled(
                         ok && p.start.is_some(),
-                        egui::Button::new("Загрузить и запустить"),
+                        Button::new("Загрузить и запустить"),
                     )
                     .clicked()
                 {
@@ -1122,7 +1166,7 @@ impl App {
                     ui.label(&info);
                     if !ok {
                         ui.label(
-                            RichText::new("нужна полная конфигурация").color(Color32::LIGHT_RED),
+                            RichText::new("нужна полная конфигурация").color(Color::LIGHT_RED),
                         );
                     }
                     if buttons(ui) {
@@ -1136,7 +1180,7 @@ impl App {
                         .on_hover_text(&info);
                     if !ok {
                         ui.label(
-                            RichText::new("нужна полная конфигурация").color(Color32::LIGHT_RED),
+                            RichText::new("нужна полная конфигурация").color(Color::LIGHT_RED),
                         );
                     }
                 });
@@ -1144,9 +1188,9 @@ impl App {
         }
     }
 
-    fn programs_window(&mut self, ctx: &egui::Context) {
+    fn programs_window(&mut self, ctx: &Ctx) {
         let mut open = self.programs_open;
-        egui::Window::new("Программы из журналов")
+        Window::new("Программы из журналов")
             .open(&mut open)
             .default_width(560.0)
             .show(ctx, |ui| self.programs_list(ui, false));
@@ -1174,7 +1218,7 @@ impl App {
 
     // ----- CP/M и ОС ЮТ-88 -----
 
-    fn cpm_menu(&mut self, ui: &mut egui::Ui) {
+    fn cpm_menu(&mut self, ui: &mut Ui) {
         for (sys, keep, label) in [
             (
                 System::Cpm64,
@@ -1210,7 +1254,7 @@ impl App {
         ui.separator();
         let has_kd = self.m.has_kvazidisk();
         if ui
-            .add_enabled(has_kd, egui::Button::new("Сохранить образ квазидиска…"))
+            .add_enabled(has_kd, Button::new("Сохранить образ квазидиска…"))
             .clicked()
         {
             ui.close();
@@ -1221,7 +1265,7 @@ impl App {
             }
         }
         if ui
-            .add_enabled(has_kd, egui::Button::new("Загрузить образ квазидиска…"))
+            .add_enabled(has_kd, Button::new("Загрузить образ квазидиска…"))
             .clicked()
         {
             ui.close();
@@ -1287,14 +1331,14 @@ impl App {
         }
     }
 
-    fn cpm_window(&mut self, ctx: &egui::Context) {
+    fn cpm_window(&mut self, ctx: &Ctx) {
         let mut open = self.cpm_open;
         let disk = self.m.cpm_default_disk();
         let list = self.m.cpm_list(disk);
         let mut extract: Option<String> = None;
         let mut delete: Option<String> = None;
         let mut put = false;
-        egui::Window::new("Диск CP/M")
+        Window::new("Диск CP/M")
             .open(&mut open)
             .default_width(420.0)
             .show(ctx, |ui| {
@@ -1309,7 +1353,7 @@ impl App {
                         ui.label("Файлов нет.");
                     }
                     Ok(files) => {
-                        egui::Grid::new("cpm-files").striped(true).show(ui, |ui| {
+                        Grid::new("cpm-files").striped(true).show(ui, |ui| {
                             for f in files {
                                 ui.monospace(format!("{:<12}", f.name));
                                 ui.monospace(format!("{:>6} байт", f.bytes()));
@@ -1369,12 +1413,12 @@ impl App {
         }
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let state = if self.paused {
-                RichText::new("⏸ пауза").color(Color32::YELLOW)
+                RichText::new("⏸ пауза").color(Color::YELLOW)
             } else {
-                RichText::new("▶ работа").color(Color32::LIGHT_GREEN)
+                RichText::new("▶ работа").color(Color::LIGHT_GREEN)
             };
             ui.label(state);
             ui.separator();
@@ -1408,20 +1452,19 @@ impl App {
 
     /// Панель кнопок горячих клавиш (как в Norton/Midnight Commander): щелчок — то же,
     /// что нажатие клавиши.
-    fn fkey_bar(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
+    fn fkey_bar(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for &(label, key, shift, hint) in keymap::FKEY_BAR {
                 let text = RichText::new(label).monospace();
                 if ui.button(text).on_hover_text(hint).clicked() {
-                    self.hotkey(&ctx, key, shift);
+                    self.hotkey(key, shift);
                 }
             }
         });
     }
 
-    fn help_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Справка: клавиши")
+    fn help_window(&mut self, ctx: &Ctx) {
+        Window::new("Справка: клавиши")
             .open(&mut self.help_open)
             .default_size([520.0, 420.0])
             .vscroll(true)
@@ -1438,7 +1481,7 @@ impl App {
                      нажатию клавиши.",
                 );
                 ui.heading("Горячие клавиши");
-                egui::Grid::new("hot").striped(true).show(ui, |ui| {
+                Grid::new("hot").striped(true).show(ui, |ui| {
                     for (k, what) in keymap::HOTKEYS {
                         ui.monospace(*k);
                         ui.label(*what);
@@ -1446,7 +1489,7 @@ impl App {
                     }
                 });
                 ui.heading("Модуль 1 (минимальная конфигурация)");
-                egui::Grid::new("pad").striped(true).show(ui, |ui| {
+                Grid::new("pad").striped(true).show(ui, |ui| {
                     ui.strong("ПК");
                     ui.strong("ЮТ-88");
                     ui.end_row();
@@ -1460,7 +1503,7 @@ impl App {
                     ui.end_row();
                 });
                 ui.heading("Полная клавиатура (дисплейный модуль)");
-                egui::Grid::new("kb").striped(true).show(ui, |ui| {
+                Grid::new("kb").striped(true).show(ui, |ui| {
                     ui.strong("ПК");
                     ui.strong("ЮТ-88");
                     ui.end_row();
@@ -1478,10 +1521,10 @@ impl App {
             });
     }
 
-    fn tape_window(&mut self, ctx: &egui::Context) {
+    fn tape_window(&mut self, ctx: &Ctx) {
         let mut open = self.tape.open;
         let mut actions: Vec<u8> = Vec::new();
-        egui::Window::new("Магнитофон и файлы")
+        Window::new("Магнитофон и файлы")
             .open(&mut open)
             .default_width(520.0)
             .show(ctx, |ui| {
@@ -1499,7 +1542,7 @@ impl App {
                 path_row(ui, d, &mut t.load_path, true, "bin");
                 ui.horizontal(|ui| {
                     ui.label("адрес:");
-                    ui.add(egui::TextEdit::singleline(&mut t.load_addr).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut t.load_addr).desired_width(60.0));
                     if ui.button("Загрузить").clicked() {
                         actions.push(1);
                     }
@@ -1512,9 +1555,9 @@ impl App {
                 path_row(ui, d, &mut t.save_path, false, "bin");
                 ui.horizontal(|ui| {
                     ui.label("с");
-                    ui.add(egui::TextEdit::singleline(&mut t.save_start).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut t.save_start).desired_width(60.0));
                     ui.label("по");
-                    ui.add(egui::TextEdit::singleline(&mut t.save_end).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut t.save_end).desired_width(60.0));
                     if ui.button("Сохранить").clicked() {
                         actions.push(3);
                     }
@@ -1527,7 +1570,7 @@ impl App {
                 path_row(ui, d, &mut t.gen_wav, false, "wav");
                 ui.horizontal(|ui| {
                     ui.label("адрес начала:");
-                    ui.add(egui::TextEdit::singleline(&mut t.gen_addr).desired_width(60.0));
+                    ui.add(TextEdit::singleline(&mut t.gen_addr).desired_width(60.0));
                     ui.radio_value(&mut t.gen_format_f, false, "МОНИТОР модуля 1");
                     ui.radio_value(&mut t.gen_format_f, true, "МОНИТОР-F");
                 });
@@ -1606,106 +1649,121 @@ impl App {
         }
     }
 
-    /// Обновить текстуру экрана и сегменты индикаторов — только если они изменились
+    /// Обновить изображение экрана и сегменты индикаторов — только если они изменились
     /// (не чаще кадра окна).
-    fn update_screen_texture(&mut self, ctx: &egui::Context) {
+    fn update_screen(&mut self) {
         if self.m.take_indicators_changed() {
             self.segs = self.m.indicator_segments();
         }
         let changed = self.m.take_screen_changed();
         if !changed
-            && self.tex_phosphor == Some(self.phosphor)
-            && (self.screen_tex.is_some() || !self.has_display())
+            && self.screen_phosphor == Some(self.phosphor)
+            && (self.screen_ok || !self.has_display())
         {
             return;
         }
-        self.tex_phosphor = Some(self.phosphor);
+        self.screen_phosphor = Some(self.phosphor);
         let (fg, bg) = self.phosphor.colors();
-        if !self.m.render_screen(&mut self.screen_buf, fg, bg) {
-            self.screen_tex = None;
-            return;
-        }
-        let img = egui::ColorImage::from_rgba_unmultiplied(
-            [screen::WIDTH, screen::HEIGHT],
-            &self.screen_buf,
-        );
-        match &mut self.screen_tex {
-            Some(t) => t.set(img, TextureOptions::LINEAR),
-            None => {
-                self.screen_tex = Some(ctx.load_texture("screen", img, TextureOptions::LINEAR));
-            }
-        }
+        self.screen_ok = self.m.render_screen(&mut self.screen_buf, fg, bg);
     }
 
-    /// Рисунок компьютера.
-    fn computer(&mut self, ui: &mut egui::Ui) {
-        let rect = ui.available_rect_before_wrap();
-        ui.allocate_rect(rect, egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        // Стол.
-        painter.rect_filled(rect, 0.0, Color32::from_rgb(0x2C, 0x2A, 0x2E));
-        let segs = self.segs;
-        let mut hits = Hits::default();
-        let pressed = PressedView(&self.holds);
-        if self.has_display() {
-            let (w, h) = (draw::KB_W + 60.0, draw::TV_H + draw::KB_H + 50.0);
-            let x = Xf::fit(rect.shrink(8.0), w, h);
-            let glow = {
-                let (fg, _) = self.phosphor.colors();
-                Color32::from_rgb(fg[0], fg[1], fg[2])
+    /// Клавиши, которые рисуются нажатыми.
+    fn drawn_down(&self) -> HashSet<Hit> {
+        self.holds
+            .iter()
+            .filter(|(_, x)| x.applied || x.pc || x.mouse || x.sticky)
+            .map(|(&h, _)| h)
+            .collect()
+    }
+
+    /// Привести кэш-слой рисунка в соответствие с прямоугольником `rect`, масштабом
+    /// и нажатыми клавишами. `size` — размер холста кадра в пикселях.
+    fn update_picture_layer(&mut self, rect: Rect, size: (u32, u32), ppp: f32) {
+        let key = LayerKey {
+            rect,
+            size,
+            ppp,
+            full: self.has_display(),
+            phosphor: self.phosphor,
+        };
+        let down = self.drawn_down();
+        let pic = &mut self.pic;
+        let mut whole = pic.key != Some(key) || pic.canvas.is_none() || pic.layout.is_none();
+        if !whole && down != pic.down {
+            let (Some(c), Some(layout)) = (pic.canvas.as_mut(), pic.layout.as_ref()) else {
+                unreachable!()
             };
-            draw::tv(
-                &painter,
-                x.sub(20.0, 10.0, 1.0),
-                self.screen_tex.as_ref(),
-                glow,
-            );
-            let k = 0.86;
-            draw::cpu_module(
-                &painter,
-                x.sub(draw::TV_W + 50.0, 40.0, k),
-                segs,
-                &pressed,
-                &mut hits,
-            );
-            draw::keyboard(
-                &painter,
-                x.sub(30.0, draw::TV_H + 40.0, 1.0),
-                &pressed,
-                &mut hits,
-            );
-        } else {
-            let x = Xf::fit(
-                rect.shrink(12.0),
-                draw::MODULE_W + 20.0,
-                draw::MODULE_H + 20.0,
-            );
-            draw::cpu_module(&painter, x.sub(10.0, 6.0, 1.0), segs, &pressed, &mut hits);
+            for &h in down.symmetric_difference(&pic.down) {
+                if picture::redraw_key(c, layout, &pic.hits, h, down.contains(&h)).is_none() {
+                    whole = true;
+                    break;
+                }
+                pic.key_redraws += 1;
+            }
+            pic.down = down.clone();
         }
-        self.mouse_input(ui, &hits);
+        if whole {
+            let c = pic
+                .canvas
+                .get_or_insert_with(|| Canvas::new(size.0, size.1));
+            c.resize(size.0, size.1);
+            c.set_scale(ppp);
+            c.clear(Color::TRANSPARENT);
+            let layout = Layout::new(rect, key.full);
+            let mut hits = Hits::default();
+            picture::computer_static(
+                c,
+                &layout,
+                self.phosphor.glow(),
+                &PressedSet(&down),
+                &mut hits,
+            );
+            pic.hits = hits;
+            pic.layout = Some(layout);
+            pic.key = Some(key);
+            pic.down = down;
+            pic.full_redraws += 1;
+        }
+    }
+
+    /// Рисунок компьютера: кэш-слой статической части и живая часть поверх.
+    fn computer(&mut self, ui: &mut Ui) {
+        let rect = ui.available_rect_before_wrap();
+        ui.allocate_rect(rect, Sense::hover());
+        let ppp = ui.ctx().pixels_per_point();
+        let size = ui.ctx().with_canvas(|c| (c.width(), c.height()));
+        self.update_picture_layer(rect, size, ppp);
+        let screen = self.screen_ok.then_some((
+            self.screen_buf.as_slice(),
+            screen::WIDTH as u32,
+            screen::HEIGHT as u32,
+        ));
+        let glow = self.phosphor.glow();
+        let segs = self.segs;
+        let pic = &self.pic;
+        if let (Some(layer), Some(layout)) = (pic.canvas.as_ref(), pic.layout.as_ref()) {
+            ui.canvas_at(rect, |c| {
+                c.draw_canvas(layer, Pos2::ZERO);
+                picture::computer_live(c, layout, segs, screen, glow);
+            });
+        }
+        self.mouse_input(ui);
     }
 }
 
-struct PressedView<'a>(&'a HashMap<Hit, Hold>);
+/// Нажатые клавиши для рисования.
+struct PressedSet<'a>(&'a HashSet<Hit>);
 
-impl draw::Pressed for PressedView<'_> {
+impl picture::Pressed for PressedSet<'_> {
     fn is_down(&self, h: Hit) -> bool {
-        self.0
-            .get(&h)
-            .is_some_and(|x| x.applied || x.pc || x.mouse || x.sticky)
+        self.0.contains(&h)
     }
 }
 
-fn path_row(
-    ui: &mut egui::Ui,
-    dialogs: &mut dyn FileDialogs,
-    path: &mut String,
-    open: bool,
-    ext: &str,
-) {
+fn path_row(ui: &mut Ui, dialogs: &mut dyn FileDialogs, path: &mut String, open: bool, ext: &str) {
     ui.horizontal(|ui| {
         ui.add(
-            egui::TextEdit::singleline(path)
+            TextEdit::singleline(path)
                 .desired_width(380.0)
                 .hint_text("путь к файлу"),
         );
@@ -1722,24 +1780,21 @@ fn path_row(
     });
 }
 
-impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl App {
+    /// Кадр главного окна: клавиатура, эмуляция за прошедшее время, меню, строка
+    /// состояния, панель F-клавиш, рисунок компьютера и плавающие окна.
+    pub fn frame(&mut self, ctx: &Ctx) {
         self.keyboard_input(ctx);
         self.emulate();
-        self.update_screen_texture(ctx);
+        self.update_screen();
 
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
-        egui::TopBottomPanel::bottom("fkeys").show(ctx, |ui| self.fkey_bar(ui));
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
+        TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
+        TopBottomPanel::bottom("status").show(ctx, |ui| self.status_bar(ui));
+        TopBottomPanel::bottom("fkeys").show(ctx, |ui| self.fkey_bar(ui));
+        CentralPanel::default()
+            .frame(Frame::NONE)
             .show(ctx, |ui| self.computer(ui));
 
-        let paused = self.paused;
-        if self.dbg.open {
-            let a = self.dbg.window(ctx, &mut self.m, paused);
-            self.do_debug_action(a);
-        }
         if self.help_open {
             self.help_window(ctx);
         }
@@ -1753,7 +1808,7 @@ impl eframe::App for App {
             self.cpm_window(ctx);
         }
         if self.about_open {
-            egui::Window::new("О программе")
+            Window::new("О программе")
                 .open(&mut self.about_open)
                 .show(ctx, |ui| {
                     ui.label("Эмулятор микро-ЭВМ «ЮТ-88»");
@@ -1766,7 +1821,7 @@ impl eframe::App for App {
         }
         if let Some(e) = self.error_popup.clone() {
             let mut open = true;
-            egui::Window::new("Ошибка")
+            Window::new("Ошибка")
                 .collapsible(false)
                 .open(&mut open)
                 .show(ctx, |ui| {
@@ -1779,11 +1834,33 @@ impl eframe::App for App {
                 self.error_popup = None;
             }
         }
-        // Окно перерисовывается непрерывно — от этого зависит ход эмуляции.
-        ctx.request_repaint();
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    /// Окно отладчика открыто (F12, меню «Вид», останов в точке).
+    pub fn debugger_open(&self) -> bool {
+        self.dbg.open
+    }
+
+    /// Закрыть окно отладчика (крестик окна ОС).
+    pub fn close_debugger(&mut self) {
+        self.dbg.open = false;
+    }
+
+    /// Кадр окна отладчика в своём контексте `ctx` (отдельное окно ОС или стенд тестов).
+    /// Эмуляция в нём не идёт — только в [`App::frame`].
+    pub fn debugger_frame(&mut self, ctx: &Ctx) {
+        let paused = self.paused;
+        let a = self.dbg.frame(ctx, &mut self.m, paused);
+        self.do_debug_action(a);
+    }
+
+    /// Попросили выйти (F10 или кнопка «F10 Выход»).
+    pub fn quit_requested(&self) -> bool {
+        self.quit_requested
+    }
+
+    /// Перед выходом: сохранить образ квазидиска в его файл (если он задан).
+    pub fn on_exit(&mut self) {
         if let Some(p) = self.kvazidisk_file.clone()
             && self.m.has_kvazidisk()
         {

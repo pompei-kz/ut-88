@@ -326,8 +326,15 @@ impl Canvas {
         if radius <= 0.0 {
             // Прямоугольник отсекается геометрически, маска не нужна.
             if let Some(r) = self.clip_rect_px(x0, y0, x1, y1) {
-                self.pixmap
-                    .fill_rect(r, &solid(color), Transform::identity(), None);
+                if r.width() < 2.0 {
+                    // Узкий прямоугольник с дробным левым краем tiny-skia 0.11 заливает
+                    // верно, но в отладочной сборке падает на debug_assert — заливаем
+                    // контуром.
+                    self.fill_path_px(&PathBuilder::from_rect(r), color);
+                } else {
+                    self.pixmap
+                        .fill_rect(r, &solid(color), Transform::identity(), None);
+                }
             }
         } else if let Some(path) = rect_path(x0, y0, x1, y1, radius * s) {
             self.fill_path_px(&path, color);
@@ -335,7 +342,7 @@ impl Canvas {
     }
 
     /// Рамка прямоугольника толщиной `width`; линия идёт **по центру** границы `rect`
-    /// (половина толщины снаружи). Для рамки внутри (`StrokeKind::Inside` в egui)
+    /// (половина толщины снаружи). Для рамки внутри прямоугольника
     /// передайте `rect.shrink(width / 2.0)` и `radius - width / 2.0`.
     pub fn stroke_rect(&mut self, rect: Rect, radius: f32, width: f32, color: Color) {
         let s = self.scale;
@@ -366,7 +373,7 @@ impl Canvas {
         }
     }
 
-    /// Отрезок толщиной `width` с плоскими концами (как `line_segment` в egui).
+    /// Отрезок толщиной `width` с плоскими концами.
     pub fn line(&mut self, a: Pos2, b: Pos2, width: f32, color: Color) {
         let s = self.scale;
         let mut pb = PathBuilder::new();
@@ -431,7 +438,7 @@ impl Canvas {
 
     /// Написать строку (одну, без переноса; `'\n'` и другие управляющие символы
     /// пропускаются). Строка размером [`Canvas::measure_text`] выравнивается точкой
-    /// `align` к `pos` (как `Painter::text` в egui). Возвращает занятый прямоугольник
+    /// `align` к `pos`. Возвращает занятый прямоугольник
     /// (логические точки). `size` — кегль (em) в логических точках.
     pub fn text(
         &mut self,
