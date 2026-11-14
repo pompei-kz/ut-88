@@ -11,6 +11,7 @@ pub mod app;
 pub mod debugger;
 pub mod dialogs;
 pub mod draw;
+pub mod gfx;
 pub mod keymap;
 pub mod loader;
 pub mod settings;
